@@ -24,10 +24,10 @@ CHANGELOG=(
 )
 
 # 定义颜色代码
-TITLE='\033[0;34m'      # 标题颜色
+TITLE='\033[0;34m' # 标题颜色
 OPTION_NUM='\033[0;35m' # 选项编号颜色
 OPTION_TEXT='\033[1;37m' # 选项文案颜色
-SEPARATOR='\033[0;34m'  # 分割线颜色
+SEPARATOR='\033[0;34m' # 分割线颜色
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
@@ -36,21 +36,24 @@ NC='\033[0m' # 重置颜色
 # 工具箱安装路径
 TOOL_PATH="/usr/local/bin/gotool"
 
-# 服务端配置
-SERVER_DIR="/usr/local/gostc-admin"
-SERVER_BIN="server"
-SERVER_SVC="gostc-admin"
-SERVER_CFG="${SERVER_DIR}/config.yml"
-
 # 节点/客户端配置
 NODE_DIR="/usr/local/bin"
 NODE_BIN="gostc"
 NODE_SVC="gostc"
 
+# 服务端配置
+SERVER_DIR="/usr/local/gostc-admin"
+SERVER_BIN="server"
+SERVER_SVC="gostc-admin"
+SERVER_CFG="${SERVER_DIR}/config.yml"
+BACKUP_DIR="${SERVER_DIR}/data"
+sudo mkdir -p "$BACKUP_DIR"
+version_type=$(cat "$SERVER_DIR/version.txt")
+
 # 安装模式检测
 if [ ! -t 0 ]; then
     echo -e "${TITLE}▶ 正在安装 GOSTC 工具箱...${NC}"
-    sudo curl -fL "https://git.wavee.cn/raw.githubusercontent.com/dxiaom/gotool/refs/heads/main/install.sh" -o "$TOOL_PATH" || {
+    sudo curl -fL "https://raw.githubusercontent.com/297855/gootl/main/install.sh" -o "$TOOL_PATH" || {
         echo -e "${RED}✗ 工具箱下载失败${NC}"
         exit 1
     }
@@ -63,9 +66,9 @@ fi
 # 获取服务状态函数
 get_service_status() {
     local svc=$1 bin=$2
-    
+
     ! command -v "$bin" &>/dev/null && echo -e "${YELLOW}[未安装]${NC}" && return
-    
+
     if sudo systemctl is-active --quiet "$svc" 2>/dev/null; then
         echo -e "${GREEN}[运行中]${NC}"
     elif sudo systemctl is-failed --quiet "$svc" 2>/dev/null; then
@@ -92,7 +95,7 @@ uninstall_toolbox() {
 
 # 获取最新版本信息
 get_latest_version() {
-    local script=$(curl -s "https://git.wavee.cn/raw.githubusercontent.com/dxiaom/gotool/refs/heads/main/install.sh")
+    local script=$(curl -s "https://raw.githubusercontent.com/297855/gootl/main/install.sh")
     local version=$(awk -F'"' '/TOOL_VERSION=/{print $2; exit}' <<< "$script")
     local changelog=$(grep -m1 '^"' <<< "$script" | cut -d'"' -f2)
     echo "$version|$changelog"
@@ -103,22 +106,22 @@ check_update() {
     echo -e "${YELLOW}▶ 正在检查更新...${NC}"
     local latest_info=$(get_latest_version)
     [[ -z "$latest_info" ]] && echo -e "${RED}✗ 无法获取最新版本信息${NC}" && return
-    
+
     IFS='|' read -r latest_version latest_changelog <<< "$latest_info"
     [[ "$latest_version" == "$TOOL_VERSION" ]] && \
         echo -e "${GREEN}✓ 当前已是最新版本 (v$TOOL_VERSION)${NC}" && return
-    
+
     echo -e "${TITLE}▷ 当前版本: ${OPTION_TEXT}v$TOOL_VERSION${NC}"
     echo -e "${TITLE}▷ 最新版本: ${OPTION_TEXT}v$latest_version${NC}"
     echo -e "${YELLOW}════════════════ 更新日志 ════════════════${NC}"
     [[ -n "$latest_changelog" ]] && echo -e "${OPTION_TEXT}$latest_changelog${NC}" || echo -e "${YELLOW}暂无更新日志${NC}"
     echo -e "${YELLOW}══════════════════════════════════════════${NC}"
-    
+
     read -rp "是否立即更新? (y/n, 默认 y): " confirm
     [[ "$confirm" == "n" ]] && echo -e "${TITLE}▶ 更新已取消${NC}" && return
-    
+
     echo -e "${YELLOW}▶ 正在更新工具箱...${NC}"
-    sudo curl -fL "https://git.wavee.cn/raw.githubusercontent.com/dxiaom/gotool/refs/heads/main/install.sh" -o "$TOOL_PATH" && {
+    sudo curl -fL "https://raw.githubusercontent.com/297855/gootl/main/install.sh" -o "$TOOL_PATH" && {
         sudo chmod +x "$TOOL_PATH"
         echo -e "${GREEN}✓ 工具箱已更新到 v$latest_version${NC}"
         echo -e "${TITLE}请重新运行 ${OPTION_TEXT}gotool${TITLE} 命令${NC}"
@@ -127,38 +130,11 @@ check_update() {
     echo -e "${RED}✗ 更新失败${NC}"
 }
 
-# 自动检查更新
-auto_check_update() {
-    echo -e "${YELLOW}▶ 正在检查工具箱更新...${NC}"
-    echo -e "${TITLE}▷ 当前版本: ${OPTION_TEXT}v$TOOL_VERSION${NC}"
-    
-    local latest_info=$(get_latest_version)
-    [[ -z "$latest_info" ]] && echo -e "${RED}✗ 无法获取最新版本信息${NC}" && return
-    
-    IFS='|' read -r latest_version latest_changelog <<< "$latest_info"
-    [[ "$latest_version" == "$TOOL_VERSION" ]] && \
-        echo -e "${GREEN}✓ 当前已是最新版本${NC}" && return
-    
-    echo -e "${GREEN}✓ 发现新版本: ${OPTION_TEXT}v$latest_version${NC}"
-    echo -e "${YELLOW}════════════════ 更新日志 ════════════════${NC}"
-    [[ -n "$latest_changelog" ]] && echo -e "${OPTION_TEXT}$latest_changelog${NC}" || echo -e "${YELLOW}暂无更新日志${NC}"
-    echo -e "${YELLOW}══════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}▶ 正在自动更新...${NC}"
-    
-    sudo curl -fL "https://git.wavee.cn/raw.githubusercontent.com/dxiaom/gotool/refs/heads/main/install.sh" -o "$TOOL_PATH" && {
-        sudo chmod +x "$TOOL_PATH"
-        echo -e "${GREEN}✓ 工具箱已更新到 v$latest_version${NC}"
-        echo -e "${TITLE}请重新运行 ${OPTION_TEXT}gotool${TITLE} 命令${NC}"
-        exit 0
-    }
-    echo -e "${RED}✗ 自动更新失败，请手动更新${NC}"
-}
-
 # 服务管理
 service_action() {
     local svc=$1 bin=$2 action=$3
     ! command -v "$bin" &>/dev/null && echo -e "${RED}✗ 未安装，请先安装${NC}" && return
-    
+
     case $action in
         start)
             echo -e "${YELLOW}▶ 正在启动...${NC}"
@@ -188,22 +164,21 @@ service_action() {
             echo -e "${YELLOW}▶ 确定要卸载吗？${NC}"
             read -rp "确认卸载？(y/n, 默认n): " confirm
             [[ "$confirm" != "y" ]] && echo -e "${TITLE}▶ 卸载已取消${NC}" && return
-            
             sudo systemctl is-active --quiet "$svc" && {
                 echo -e "${YELLOW}▷ 停止运行中的服务...${NC}"
                 sudo systemctl stop "$svc"
             }
-            
+
             sudo systemctl list-unit-files | grep -q "$svc" && {
                 echo -e "${YELLOW}▷ 卸载系统服务...${NC}"
                 sudo "$bin" service uninstall
             }
-            
+
             echo -e "${YELLOW}▷ 删除安装文件...${NC}"
             [[ "$svc" == "$SERVER_SVC" ]] && \
                 sudo rm -rf "$SERVER_DIR" || \
                 sudo rm -f "${NODE_DIR}/${NODE_BIN}"
-            
+
             echo -e "${GREEN}✓ 已卸载${NC}"
             ;;
     esac
@@ -212,10 +187,10 @@ service_action() {
 # 服务管理菜单
 service_menu() {
     local svc=$1 bin=$2 dir=$3 title=$4 status_func=$5 install_func=$6
-    
+
     while :; do
         stat=$($status_func)
-        
+
         echo ""
         echo -e "${TITLE}${title} ${stat}${NC}"
         echo -e "${SEPARATOR}==================================================${NC}"
@@ -229,7 +204,7 @@ service_menu() {
         [[ "$svc" == "$NODE_SVC" ]] && echo -e "${OPTION_NUM}6. ${OPTION_TEXT}更新${NC}"
         echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回主菜单${NC}"
         echo -e "${SEPARATOR}==================================================${NC}"
-        
+
         read -rp "请输入选项: " choice
         case $choice in
             1) $install_func ;;
@@ -247,7 +222,9 @@ service_menu() {
 # 安装服务端
 install_server() {
     local update_mode=false base_url="https://alist.sian.one/direct/gostc/gostc-open" version="普通版本"
-    
+    # 定义保存修改时间的文件路径
+    local mod_time_file="$SERVER_DIR/mod_time.txt"
+
     # 检查是否已安装
     [ -f "${SERVER_DIR}/${SERVER_BIN}" ] && {
         echo -e "${TITLE}检测到已安装服务端，请选择操作:${NC}"
@@ -255,7 +232,7 @@ install_server() {
         echo -e "${OPTION_NUM}2. ${OPTION_TEXT}重新安装最新版本 (删除所有文件重新安装)${NC}"
         echo -e "${OPTION_NUM}3. ${OPTION_TEXT}退出${NC}"
 
-        read -rp "请输入选项编号 (1-3, 默认 1): " choice
+        read -rp "请输入选项编号 (1 - 3, 默认 1): " choice
         case $choice in
             2) sudo rm -rf "${SERVER_DIR}" ;;
             3) echo -e "${TITLE}操作已取消${NC}" && return ;;
@@ -266,14 +243,22 @@ install_server() {
     # 选择版本
     echo -e "${TITLE}请选择安装版本:${NC}"
     echo -e "${OPTION_NUM}1. ${OPTION_TEXT}普通版本 (默认)${NC}"
-    echo -e "${OPTION_Num}2. ${OPTION_TEXT}商业版本 (需要授权)${NC}"
+    echo -e "${OPTION_NUM}2. ${OPTION_TEXT}商业版本 (需要授权)${NC}"
+    echo -e "${OPTION_NUM}3. ${OPTION_TEXT}测试版本 (需要授权)${NC}"
 
-    read -rp "请输入选项编号 (1-2, 默认 1): " choice
-    [[ "$choice" == 2 ]] && {
-        base_url="https://alist.sian.one/direct/gostc"
-        version="商业版本"
-        echo -e "${YELLOW}▶ 您选择了商业版本，请确保您已获得商业授权${NC}"
-    }
+    read -rp "请输入选项编号 (1 - 3, 默认 1): " choice
+    case $choice in
+        2)
+            base_url="https://alist.sian.one/direct/gostc"
+            version="商业版本"
+            echo -e "${YELLOW}▶ 您选择了商业版本，请确保您已获得商业授权${NC}"
+            ;;
+        3)
+            base_url="https://alist.sian.one/direct/gostc/beta/"
+            version="测试版本"
+            echo -e "${YELLOW}▶ 您选择了测试版本，请确保您已获得测试授权${NC}"
+            ;;
+    esac
 
     echo ""
     echo -e "${TITLE}▶ 开始安装 服务端 (${version})${NC}"
@@ -293,11 +278,11 @@ install_server() {
                 grep -q "avx2" /proc/cpuinfo 2>/dev/null && suffix="amd64_v1"
             }
             ;;
-        "i"*"86")          suffix="386_sse2" ;;
+        "i"*"86") suffix="386_sse2" ;;
         "aarch64"|"arm64") suffix="arm64_v8.0" ;;
-        "armv7l")          suffix="arm_7" ;;
-        "armv6l")          suffix="arm_6" ;;
-        "armv5l")          suffix="arm_5" ;;
+        "armv7l") suffix="arm_7" ;;
+        "armv6l") suffix="arm_6" ;;
+        "armv5l") suffix="arm_5" ;;
         "mips64")
             lscpu 2>/dev/null | grep -qi "little endian" && suffix="mips64le_hardfloat" || suffix="mips64_hardfloat"
             ;;
@@ -306,8 +291,8 @@ install_server() {
             lscpu 2>/dev/null | grep -qi "FPU" && float="hardfloat"
             lscpu 2>/dev/null | grep -qi "little endian" && suffix="mipsle_$float" || suffix="mips_$float"
             ;;
-        "riscv64")         suffix="riscv64_rva20u64" ;;
-        "s390x")           suffix="s390x" ;;
+        "riscv64") suffix="riscv64_rva20u64" ;;
+        "s390x") suffix="s390x" ;;
         *) echo -e "${RED}错误: 不支持的架构: $ARCH${NC}" && return ;;
     esac
 
@@ -341,8 +326,8 @@ install_server() {
     # 更新模式：保留配置文件
     $update_mode && {
         echo -e "${YELLOW}▷ 更新模式: 保留配置文件${NC}"
-        sudo cp -f "$SERVER_CFG" "${SERVER_CFG}.bak" 2>/dev/null
-        sudo find "${SERVER_DIR}" -maxdepth 1 -type f ! -name '*.yml' -delete
+        sudo cp -f "$SERVER_CFG" "${BACKUP_DIR}/config_$(date +%Y%m%d%H%M%S).yml.bak" 2>/dev/null
+        sudo find "${SERVER_DIR}" -maxdepth 1 -type f! -name '*.yml' -delete
         sudo mv -f "${SERVER_CFG}.bak" "$SERVER_CFG" 2>/dev/null
     } || sudo rm -f "$SERVER_DIR/$SERVER_BIN"
 
@@ -401,6 +386,7 @@ install_server() {
         echo -e "${YELLOW}登录后请立即修改密码${NC}"
         echo -e "${YELLOW}════════════════════════════════════════════${NC}"
     }
+
 }
 
 # 安装节点/客户端
@@ -413,23 +399,283 @@ install_node() {
     echo -e "${OPTION_NUM}2. ${OPTION_TEXT}安装客户端${NC}"
     echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
-    
+
     read -p "$(echo -e "${TITLE}▷ 请输入选择 [1-2] (默认1): ${NC}")" choice
     choice=${choice:-1}
     [[ "$choice" == 0 ]] && return
-    
+
     local type="节点"
     [[ "$choice" == 2 ]] && type="客户端"
-    
+
     echo ""
     echo -e "${TITLE}▶ 开始安装 ${OPTION_TEXT}${type}${TITLE} 组件${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
-    
+
     # 获取系统信息
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
     echo -e "${TITLE}▷ 检测系统: ${OPTION_TEXT}${OS} ${ARCH}${NC}"
-    
+
+    # 架构检测
+    case "$ARCH" in
+        "x86_64") suffix="amd64_v1" ;;
+        "i"*"86") suffix="386_sse2" ;;
+        "aarch64"|"arm64") suffix="arm64_v8.0" ;;
+        "armv7l") suffix="arm_7" ;;
+        "armv6l") suffix="arm_6" ;;
+        "armv5l") suffix="arm_5" ;;
+        "mips64")
+            lscpu 2>/dev/null | grep -qi "little endian" && suffix="mips64le_hardfloat" || suffix="mips64_hardfloat"
+            ;;
+        "mips")
+            float="softfloat"
+            lscpu 2>/dev/null | grep -qi "FPU" && float="hardfloat"
+            lscpu 2>/dev/null | grep -qi "little endian" && suffix="mipsle_$float" || suffix="mips_$float"
+            ;;
+        "riscv64") suffix="riscv64_rva20u64" ;;
+        "s390x") suffix="s390x" ;;
+        *) echo -e "${RED}错误: 不支持的架构: $ARCH${NC}" && return ;;
+    esac
+
+    # 构建下载URL
+    [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
+    file="${NODE_BIN}_${OS}_${suffix}"
+    [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
+    url="https://alist.sian.one/direct/gostc/${file}"
+
+    echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    # 在文件下载步骤后添加
+    mod_time=$(curl -sI "$url" | grep -i "Last-Modified" | cut -d':' -f2- | sed 's/^\s*//;s/\s*$//')
+    [ -n "$mod_time" ] && sudo tee "${NODE_DIR}/mod_time.txt" >/dev/null <<< "$mod_time"
+
+    # 下载文件
+    sudo mkdir -p "$NODE_DIR" >/dev/null 2>&1
+    curl -# -fL -o "$file" "$url" || {
+        echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
+        return
+    }
+
+    # 解压文件
+    echo ""
+    echo -e "${TITLE}▶ 正在安装到: ${OPTION_TEXT}${NODE_DIR}${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+
+    sudo rm -f "$NODE_DIR/$NODE_BIN"
+    [[ "$file" == *.zip ]] && \
+        sudo unzip -qo "$file" -d "$NODE_DIR" || \
+        sudo tar xzf "$file" -C "$NODE_DIR"
+
+    # 设置权限
+    [ -f "$NODE_DIR/$NODE_BIN" ] && {
+        sudo chmod 755 "$NODE_DIR/$NODE_BIN"
+        echo -e "${GREEN}✓ 已安装二进制文件: ${OPTION_TEXT}${NODE_DIR}/${NODE_BIN}${NC}"
+    } || {
+        echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
+        return
+    }
+
+    # 清理
+    rm -f "$file"
+
+    # 配置
+    [[ "$type" == "节点" ]] && configure_node || configure_client
+}
+
+# 验证服务器地址
+validate_server() {
+    local addr=$1 tls=$2
+    [[ "$tls" == "true" ]] && prefix="https://" || prefix="http://"
+    [[ "$addr" != http* ]] && addr="${prefix}${addr}"
+
+    echo -e "${TITLE}▷ 验证服务器地址: ${OPTION_TEXT}$addr${NC}"
+    status=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$addr")
+
+    if [ "$status" -eq 200 ]; then
+        echo -e "${GREEN}✓ 服务器验证成功 (HTTP $status)${NC}"
+        return 0
+    else
+        echo -e "${RED}✗ 服务器验证失败 (HTTP $status)${NC}"
+        return 1
+    fi
+}
+
+# 配置节点
+configure_node() {
+    echo ""
+    echo -e "${TITLE}▶ 节点配置${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    echo -e "${GREEN}提示: 请准备好以下信息："
+    echo -e " - 服务器地址 (如: example.com:8080)"
+    echo -e " - 节点密钥 (由服务端提供)"
+    echo -e " - (可选) 网关代理地址${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+
+    # TLS选项
+    local tls="false"
+    read -p "$(echo -e "${TITLE}▷ 是否使用TLS? (y/n, 默认n): ${NC}")" choice
+    [[ "$choice" =~ ^[Yy]$ ]] && tls="true"
+
+    # 服务器地址
+    local addr="127.0.0.1:8080"
+    while :; do
+        read -p "$(echo -e "${TITLE}▷ 输入服务器地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input
+        input=${input:-$addr}
+        validate_server "$input" "$tls" && addr="$input" && break
+        echo -e "${RED}✗ 请重新输入有效的服务器地址${NC}"
+    done
+
+    # 节点密钥
+    local key=""
+    while [ -z "$key" ]; do
+        read -p "$(echo -e "${TITLE}▷ 输入节点密钥: ${NC}")" key
+        [ -z "$key" ] && echo -e "${RED}✗ 节点密钥不能为空${NC}"
+    done
+
+    # 网关代理选项
+    local proxy=""
+    read -p "$(echo -e "${TITLE}▷ 是否使用网关代理? (y/n, 默认n): ${NC}")" choice
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        while :; do
+            read -p "$(echo -e "${TITLE}▷ 输入网关地址 (包含http/https前缀): ${NC}")" url
+            [[ "$url" =~ ^https?:// ]] && proxy="$url" && break
+            echo -e "${RED}✗ 网关地址必须以http://或https://开头${NC}"
+        done
+    fi
+
+    # 构建安装命令
+    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -s -key $key"
+    [ -n "$proxy" ] && cmd+=" --proxy-base-url $proxy"
+
+    # 执行安装
+    echo ""
+    echo -e "${TITLE}▶ 正在配置节点${NC}"
+    eval "$cmd" || {
+        echo -e "${RED}✗ 节点配置失败${NC}"
+        return
+    }
+
+    # 启动服务
+    echo ""
+    echo -e "${TITLE}▶ 正在启动服务${NC}"
+    sudo systemctl start "$NODE_SVC" || {
+        echo -e "${RED}✗ 服务启动失败${NC}"
+        return
+    }
+
+    echo -e "${GREEN}✓ 服务启动成功${NC}"
+
+    # 安装完成提示
+    echo ""
+    echo -e "${TITLE}组件: ${OPTION_TEXT}节点${NC}"
+    echo -e "${TITLE}服务器地址: ${OPTION_TEXT}$addr${NC}"
+    echo -e "${TITLE}TLS: ${OPTION_TEXT}$tls${NC}"
+    [ -n "$proxy" ] && echo -e "${TITLE}网关地址: ${OPTION_TEXT}$proxy${NC}"
+}
+
+# 配置客户端
+configure_client() {
+    echo ""
+    echo -e "${TITLE}▶ 客户端配置${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    echo -e "${GREEN}提示: 请准备好以下信息："
+    echo -e " - 服务器地址 (如: example.com:8080)"
+    echo -e " - 客户端密钥 (由服务端提供)${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+
+    # TLS选项
+    local tls="false"
+    read -p "$(echo -e "${TITLE}▷ 是否使用TLS? (y/n, 默认n): ${NC}")" choice
+    [[ "$choice" =~ ^[Yy]$ ]] && tls="true"
+
+    # 服务器地址
+    local addr="127.0.0.1:8080"
+    while :; do
+        read -p "$(echo -e "${TITLE}▷ 输入服务器地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input
+        input=${input:-$addr}
+        validate_server "$input" "$tls" && addr="$input" && break
+        echo -e "${RED}✗ 请重新输入有效的服务器地址${NC}"
+    done
+
+    # 客户端密钥
+    local key=""
+    while [ -z "$key" ]; do
+        read -p "$(echo -e "${TITLE}▷ 输入客户端密钥: ${NC}")" key
+        [ -z "$key" ] && echo -e "${RED}✗ 客户端密钥不能为空${NC}"
+    done
+
+    # 构建安装命令
+    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -key $key"
+
+    # 执行安装
+    echo ""
+    echo -e "${TITLE}▶ 正在配置客户端${NC}"
+    eval "$cmd" || {
+        echo -e "${RED}✗ 客户端配置失败${NC}"
+        return
+    }
+
+    # 启动服务
+    echo ""
+    echo -e "${TITLE}▶ 正在启动服务${NC}"
+    sudo systemctl start "$NODE_SVC" || {
+        echo -e "${RED}✗ 服务启动失败${NC}"
+        return
+    }
+
+    echo -e "${GREEN}✓ 服务启动成功${NC}"
+
+    # 安装完成提示
+    echo ""
+    echo -e "${TITLE}组件: ${OPTION_TEXT}客户端${NC}"
+    echo -e "${TITLE}服务器地址: ${OPTION_TEXT}$addr${NC}"
+    echo -e "${TITLE}TLS: ${OPTION_TEXT}$tls${NC}"
+}
+
+# 显示工具箱信息
+show_info() {
+    # 获取服务端文件修改时间
+    SERVER_FILE="${SERVER_DIR}/${SERVER_BIN}"
+    if [ -f "$SERVER_FILE" ]; then
+        server_mod_time=$(date -d "@$(stat -c %Y "$SERVER_FILE")" +"%Y-%m-%d %H:%M:%S")
+    else
+        server_mod_time="获取失败"
+    fi
+    echo -e "${SEPARATOR}==================================================${NC}"
+    echo -e "${TITLE} GOSTC 服务管理工具箱 v${TOOL_VERSION} ${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    # 显示当前安装版本
+    if [ -f "$SERVER_DIR/version.txt" ]; then
+    installed_version=$(cat "$SERVER_DIR/version.txt")
+    echo -e "${TITLE}▷ 当前安装版本: ${OPTION_TEXT}$installed_version${NC}"
+    else
+    echo -e "${YELLOW}▷ 未找到版本信息${NC}"
+    fi
+    echo -e "${TITLE}▷ 服务端状态: $(server_status)${NC}"
+    echo -e "${TITLE}▷ 服务端当前版本修改时间: ${OPTION_TEXT}$server_mod_time${NC}"
+    # 添加更新检查提示
+    if [ -f "${SERVER_DIR}/${SERVER_BIN}" ]; then
+    latest_mod_time=$(curl -sI "https://alist.sian.one/direct/gostc/gostc-open/server_linux_amd64_v1.tar.gz" 2>/dev/null | grep -i "last-modified" | awk '{print $3, $4, $5}')
+    if [ -n "$latest_mod_time" ]; then
+    latest_mod_timestamp=$(date -d "$latest_mod_time" +%s 2>/dev/null)
+    current_mod_time=$(stat -c %Y "${SERVER_DIR}/${SERVER_BIN}" 2>/dev/null)
+    if [ "$latest_mod_timestamp" -gt "$current_mod_time" ]; then
+    echo -e "${YELLOW}▷ 有新版本可用 (最后修改: $(date -d "@$latest_mod_timestamp" +"%Y-%m-%d %H:%M:%S"))${NC}"
+    else
+    echo -e "${GREEN}▷ 当前已是最新版本${NC}"
+    fi
+    else
+    echo -e "${YELLOW}▷ 更新检查失败${NC}"
+    fi
+    fi
+    echo -e "${TITLE}▷ 节点/客户端状态: $(node_status)${NC}"
+    # 获取节点文件修改时间
+    node_mod_time=$(date -d "@$(stat -c %Y "${NODE_DIR}/${NODE_BIN}")" +"%Y-%m-%d %H:%M:%S")
+    echo -e "${TITLE}▷ 节点文件修改时间: ${OPTION_TEXT}$node_mod_time${NC}"
+    if [ -f "${NODE_DIR}/${NODE_BIN}" ]; then
+    # 实时获取服务器文件信息
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
     # 架构检测
     case "$ARCH" in
         "x86_64") suffix="amd64_v1" ;;
@@ -451,217 +697,71 @@ install_node() {
         *) echo -e "${RED}错误: 不支持的架构: $ARCH${NC}" && return ;;
     esac
     
-    # 构建下载URL
-    [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
-    file="${NODE_BIN}_${OS}_${suffix}"
-    [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
+    file="${NODE_BIN}_${OS}_${suffix}.tar.gz"
     url="https://alist.sian.one/direct/gostc/${file}"
     
-    echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    
-    # 下载文件
-    sudo mkdir -p "$NODE_DIR" >/dev/null 2>&1
-    curl -# -fL -o "$file" "$url" || {
-        echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
-        return
-    }
-    
-    # 解压文件
-    echo ""
-    echo -e "${TITLE}▶ 正在安装到: ${OPTION_TEXT}${NODE_DIR}${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    
-    sudo rm -f "$NODE_DIR/$NODE_BIN"
-    [[ "$file" == *.zip ]] && \
-        sudo unzip -qo "$file" -d "$NODE_DIR" || \
-        sudo tar xzf "$file" -C "$NODE_DIR"
-    
-    # 设置权限
-    [ -f "$NODE_DIR/$NODE_BIN" ] && {
-        sudo chmod 755 "$NODE_DIR/$NODE_BIN"
-        echo -e "${GREEN}✓ 已安装二进制文件: ${OPTION_TEXT}${NODE_DIR}/${NODE_BIN}${NC}"
-    } || {
-        echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
-        return
-    }
-    
-    # 清理
-    rm -f "$file"
-    
-    # 配置
-    [[ "$type" == "节点" ]] && configure_node || configure_client
-}
-
-# 验证服务器地址
-validate_server() {
-    local addr=$1 tls=$2
-    [[ "$tls" == "true" ]] && prefix="https://" || prefix="http://"
-    [[ "$addr" != http* ]] && addr="${prefix}${addr}"
-    
-    echo -e "${TITLE}▷ 验证服务器地址: ${OPTION_TEXT}$addr${NC}"
-    status=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$addr")
-    
-    if [ "$status" -eq 200 ]; then
-        echo -e "${GREEN}✓ 服务器验证成功 (HTTP $status)${NC}"
-        return 0
+    # 获取服务器最新修改时间
+    latest_mod_time=$(curl -sI "$url" | grep -i "last-modified" | cut -d':' -f2- | sed 's/^\s*//;s/\s*$//')
+    if [ -n "$latest_mod_time" ]; then
+        latest_timestamp=$(date -d "$latest_mod_time" +%s 2>/dev/null)
+        current_timestamp=$(stat -c %Y "${NODE_DIR}/${NODE_BIN}")
+        
+        if [ "$latest_timestamp" -gt "$current_timestamp" ]; then
+            echo -e "${YELLOW}▷ 有新版本可用 (服务器修改: $(date -d "@$latest_timestamp" +"%Y-%m-%d %H:%M:%S"))${NC}"
+        else
+            echo -e "${GREEN}▷ 已是最新版本${NC}"
+        fi
     else
-        echo -e "${RED}✗ 服务器验证失败 (HTTP $status)${NC}"
-        return 1
+        echo -e "${YELLOW}▷ 更新检查失败${NC}"
+    fi 
+fi
+    echo -e "${SEPARATOR}==================================================${NC}"
+}
+
+# 检查服务端更新
+check_server_update() {
+    echo -e "${YELLOW}▶ 正在检查服务端更新...${NC}"
+    
+    # 检查服务端是否已安装
+    if [ ! -f "${SERVER_DIR}/${SERVER_BIN}" ]; then
+        echo -e "${RED}✗ 服务端未安装，请先安装${NC}"
+        return
     fi
-}
 
-# 配置节点
-configure_node() {
-    echo ""
-    echo -e "${TITLE}▶ 节点配置${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    echo -e "${GREEN}提示: 请准备好以下信息："
-    echo -e "  - 服务器地址 (如: example.com:8080)"
-    echo -e "  - 节点密钥 (由服务端提供)"
-    echo -e "  - (可选) 网关代理地址${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    
-    # TLS选项
-    local tls="false"
-    read -p "$(echo -e "${TITLE}▷ 是否使用TLS? (y/n, 默认n): ${NC}")" choice
-    [[ "$choice" =~ ^[Yy]$ ]] && tls="true"
-    
-    # 服务器地址
-    local addr="127.0.0.1:8080"
-    while :; do
-        read -p "$(echo -e "${TITLE}▷ 输入服务器地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input
-        input=${input:-$addr}
-        validate_server "$input" "$tls" && addr="$input" && break
-        echo -e "${RED}✗ 请重新输入有效的服务器地址${NC}"
-    done
-    
-    # 节点密钥
-    local key=""
-    while [ -z "$key" ]; do
-        read -p "$(echo -e "${TITLE}▷ 输入节点密钥: ${NC}")" key
-        [ -z "$key" ] && echo -e "${RED}✗ 节点密钥不能为空${NC}"
-    done
-    
-    # 网关代理选项
-    local proxy=""
-    read -p "$(echo -e "${TITLE}▷ 是否使用网关代理? (y/n, 默认n): ${NC}")" choice
-    if [[ "$choice" =~ ^[Yy]$ ]]; then
-        while :; do
-            read -p "$(echo -e "${TITLE}▷ 输入网关地址 (包含http/https前缀): ${NC}")" url
-            [[ "$url" =~ ^https?:// ]] && proxy="$url" && break
-            echo -e "${RED}✗ 网关地址必须以http://或https://开头${NC}"
-        done
+    # 获取当前版本类型
+    if [ ! -f "$SERVER_DIR/version.txt" ]; then
+        echo -e "${RED}✗ 未找到版本信息文件${NC}"
+        return
     fi
+    current_version=$(cat "$SERVER_DIR/version.txt")
     
-    # 构建安装命令
-    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -s -key $key"
-    [ -n "$proxy" ] && cmd+=" --proxy-base-url $proxy"
-    
-    # 执行安装
-    echo ""
-    echo -e "${TITLE}▶ 正在配置节点${NC}"
-    eval "$cmd" || {
-        echo -e "${RED}✗ 节点配置失败${NC}"
-        return
-    }
-    
-    # 启动服务
-    echo ""
-    echo -e "${TITLE}▶ 正在启动服务${NC}"
-    sudo systemctl start "$NODE_SVC" || {
-        echo -e "${RED}✗ 服务启动失败${NC}"
-        return
-    }
-    
-    echo -e "${GREEN}✓ 服务启动成功${NC}"
-    
-    # 安装完成提示
-    echo ""
-    echo -e "${TITLE}组件: ${OPTION_TEXT}节点${NC}"
-    echo -e "${TITLE}服务器地址: ${OPTION_TEXT}$addr${NC}"
-    echo -e "${TITLE}TLS: ${OPTION_TEXT}$tls${NC}"
-    [ -n "$proxy" ] && echo -e "${TITLE}网关地址: ${OPTION_TEXT}$proxy${NC}"
-}
+    # 根据版本类型设置base_url
+    case "$current_version" in
+        "商业版本") base_url="https://alist.sian.one/direct/gostc" ;;
+        "测试版本") base_url="https://alist.sian.one/direct/gostc/beta/" ;;
+        *) base_url="https://alist.sian.one/direct/gostc/gostc-open" ;;
+    esac
 
-# 配置客户端
-configure_client() {
-    echo ""
-    echo -e "${TITLE}▶ 客户端配置${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    echo -e "${GREEN}提示: 请准备好以下信息："
-    echo -e "  - 服务器地址 (如: example.com:8080)"
-    echo -e "  - 客户端密钥 (由服务端提供)${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
+    # 获取本地文件修改时间
+    current_mod_time=$(stat -c %Y "${SERVER_DIR}/${SERVER_BIN}")
     
-    # TLS选项
-    local tls="false"
-    read -p "$(echo -e "${TITLE}▷ 是否使用TLS? (y/n, 默认n): ${NC}")" choice
-    [[ "$choice" =~ ^[Yy]$ ]] && tls="true"
-    
-    # 服务器地址
-    local addr="127.0.0.1:8080"
-    while :; do
-        read -p "$(echo -e "${TITLE}▷ 输入服务器地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input
-        input=${input:-$addr}
-        validate_server "$input" "$tls" && addr="$input" && break
-        echo -e "${RED}✗ 请重新输入有效的服务器地址${NC}"
-    done
-    
-    # 客户端密钥
-    local key=""
-    while [ -z "$key" ]; do
-        read -p "$(echo -e "${TITLE}▷ 输入客户端密钥: ${NC}")" key
-        [ -z "$key" ] && echo -e "${RED}✗ 客户端密钥不能为空${NC}"
-    done
-    
-    # 构建安装命令
-    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -key $key"
-    
-    # 执行安装
-    echo ""
-    echo -e "${TITLE}▶ 正在配置客户端${NC}"
-    eval "$cmd" || {
-        echo -e "${RED}✗ 客户端配置失败${NC}"
-        return
-    }
-    
-    # 启动服务
-    echo ""
-    echo -e "${TITLE}▶ 正在启动服务${NC}"
-    sudo systemctl start "$NODE_SVC" || {
-        echo -e "${RED}✗ 服务启动失败${NC}"
-        return
-    }
-    
-    echo -e "${GREEN}✓ 服务启动成功${NC}"
-    
-    # 安装完成提示
-    echo ""
-    echo -e "${TITLE}组件: ${OPTION_TEXT}客户端${NC}"
-    echo -e "${TITLE}服务器地址: ${OPTION_TEXT}$addr${NC}"
-    echo -e "${TITLE}TLS: ${OPTION_TEXT}$tls${NC}"
-}
-
-# 更新节点
-update_node() {
-    ! command -v "$NODE_BIN" &>/dev/null && \
-        echo -e "${RED}✗ 节点/客户端未安装，请先安装${NC}" && return
-
-    # 获取系统信息
+    # 获取系统架构信息（与install_server函数相同）
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
-    echo -e "${TITLE}▷ 检测系统: ${OPTION_TEXT}${OS} ${ARCH}${NC}"
-
-    # 架构检测
     case "$ARCH" in
-        "x86_64") suffix="amd64_v1" ;;
+        "x86_64")
+            suffix="amd64_v1"
+            [[ "$OS" == "linux" ]] && {
+                grep -q "avx512" /proc/cpuinfo 2>/dev/null && suffix="amd64_v3"
+                grep -q "avx2" /proc/cpuinfo 2>/dev/null && suffix="amd64_v1"
+            }
+            ;;
         "i"*"86") suffix="386_sse2" ;;
         "aarch64"|"arm64") suffix="arm64_v8.0" ;;
         "armv7l") suffix="arm_7" ;;
         "armv6l") suffix="arm_6" ;;
         "armv5l") suffix="arm_5" ;;
-        "mips64") 
+        "mips64")
             lscpu 2>/dev/null | grep -qi "little endian" && suffix="mips64le_hardfloat" || suffix="mips64_hardfloat"
             ;;
         "mips")
@@ -676,88 +776,92 @@ update_node() {
 
     # 构建下载URL
     [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
-    file="${NODE_BIN}_${OS}_${suffix}"
+    file="${SERVER_BIN}_${OS}_${suffix}"
     [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
-    url="https://alist.sian.one/direct/gostc/${file}"
+    url="${base_url}/${file}"
 
-    echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-
-    # 创建临时目录
-    tmp=$(mktemp -d)
-    cd "$tmp" || return
-
-    # 下载文件
-    curl -# -fL -o "$file" "$url" || {
-        echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
+    # 获取服务器文件修改时间
+    echo -e "${TITLE}▷ 正在检查更新: ${OPTION_TEXT}${current_version}${NC}"
+    latest_mod_time=$(curl -sI "$url" | grep -i "last-modified" | awk -F': ' '{print $2}' | tr -d '\r')
+    if [ -z "$latest_mod_time" ]; then
+        echo -e "${RED}✗ 无法获取服务器文件修改时间${NC}"
         return
-    }
+    fi
+    
+    latest_mod_timestamp=$(date -d "$latest_mod_time" +%s)
 
-    # 停止服务
-    echo -e "${YELLOW}▷ 停止节点/客户端服务...${NC}"
-    sudo systemctl stop "$NODE_SVC"
-
-    # 解压文件
-    [[ "$file" == *.zip ]] && \
-        unzip -qo "$file" -d "$tmp" || \
-        tar xzf "$file" -C "$tmp"
-
-    # 更新文件
-    [ -f "$tmp/$NODE_BIN" ] && {
-        sudo mv -f "$tmp/$NODE_BIN" "${NODE_DIR}/${NODE_BIN}"
-        sudo chmod 755 "${NODE_DIR}/${NODE_BIN}"
-        echo -e "${GREEN}✓ 节点/客户端更新成功${NC}"
-    } || {
-        echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
-        sudo systemctl start "$NODE_SVC"
-        return
-    }
-
-    # 清理
-    cd - >/dev/null || return
-    rm -rf "$tmp"
-
-    # 启动服务
-    echo -e "${YELLOW}▷ 启动节点/客户端服务...${NC}"
-    sudo systemctl start "$NODE_SVC"
-
-    # 检查状态
-    sleep 2
-    sudo systemctl is-active --quiet "$NODE_SVC" && \
-        echo -e "${GREEN}✓ 节点/客户端已成功启动${NC}" || \
-        echo -e "${YELLOW}⚠ 节点/客户端启动可能存在问题${NC}"
-}
-
-# 显示工具箱信息
-show_info() {
-    echo -e "${SEPARATOR}==================================================${NC}"
-    echo -e "${TITLE}          GOSTC 服务管理工具箱 v${TOOL_VERSION}           ${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    echo -e "${TITLE}▷ 服务端状态: $(server_status)${NC}"
-    echo -e "${TITLE}▷ 节点/客户端状态: $(node_status)${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
+    # 比较修改时间
+    if [ "$latest_mod_timestamp" -gt "$current_mod_time" ]; then
+        echo -e "${YELLOW}▶ 发现新的服务端版本，准备更新...${NC}"
+        
+        # 停止服务
+        sudo systemctl stop "$SERVER_SVC"
+        
+        # 备份配置
+        sudo cp -f "$SERVER_CFG" "${BACKUP_DIR}/config_$(date +%Y%m%d%H%M%S).yml.bak"
+        
+        # 下载并解压新版本
+        curl -# -fL -o "$file" "$url" || {
+            echo -e "${RED}✗ 文件下载失败!${NC}"
+            return
+        }
+        
+        [[ "$file" == *.zip ]] && \
+            sudo unzip -qo "$file" -d "$SERVER_DIR" || \
+            sudo tar xzf "$file" -C "$SERVER_DIR"
+        
+        # 设置权限
+        sudo chmod 755 "$SERVER_DIR/$SERVER_BIN"
+        
+        # 恢复配置
+        sudo mv -f "${SERVER_CFG}.bak" "$SERVER_CFG"
+        
+        # 启动服务
+        sudo systemctl start "$SERVER_SVC"
+        
+        # 清理临时文件
+        rm -f "$file"
+        
+        # 更新version.txt
+        echo "$current_version" | sudo tee "$SERVER_DIR/version.txt" > /dev/null
+        
+        # 检查服务状态
+        sleep 2
+        status=$(systemctl is-active "$SERVER_SVC")
+        if [[ "$status" == "active" ]]; then
+            echo -e "${GREEN}✓ 服务端已成功更新${NC}"
+            echo -e "${TITLE}当前版本: ${OPTION_TEXT}$current_version${NC}"
+            echo -e "${TITLE}服务状态: ${GREEN}运行中${NC}"
+        else
+            echo -e "${YELLOW}⚠ 服务启动可能存在问题，当前状态: ${status}${NC}"
+        fi
+    else
+        echo -e "${GREEN}✓ 服务端已是最新版本${NC}"
+    fi
 }
 
 # 主菜单
 main_menu() {
-    auto_check_update
-    
+    check_update
+
     while :; do
         show_info
-        
+
         echo -e "${OPTION_NUM}1. ${OPTION_TEXT}服务端管理${NC}"
         echo -e "${OPTION_NUM}2. ${OPTION_TEXT}节点/客户端管理${NC}"
         echo -e "${OPTION_NUM}3. ${OPTION_TEXT}检查更新${NC}"
-        echo -e "${OPTION_NUM}4. ${OPTION_TEXT}卸载工具箱${NC}"
+        echo -e "${OPTION_NUM}4. ${OPTION_TEXT}检查服务端更新${NC}"
+        echo -e "${OPTION_NUM}5. ${OPTION_TEXT}卸载工具箱${NC}"
         echo -e "${OPTION_NUM}0. ${OPTION_TEXT}退出${NC}"
         echo -e "${SEPARATOR}==================================================${NC}"
-        
+
         read -rp "请输入选项: " choice
         case $choice in
             1) service_menu "$SERVER_SVC" "$SERVER_BIN" "$SERVER_DIR" "GOSTC 服务端管理" server_status install_server ;;
             2) service_menu "$NODE_SVC" "$NODE_BIN" "$NODE_DIR" "GOSTC 节点/客户端管理" node_status install_node ;;
             3) check_update ;;
-            4) uninstall_toolbox ;;
+            4) check_server_update ;;
+            5) uninstall_toolbox ;;
             0) 
                 echo -e "${TITLE}▶ 感谢使用 GOSTC 工具箱${NC}"
                 exit 0
