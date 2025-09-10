@@ -632,6 +632,91 @@ configure_client() {
     echo -e "${TITLE}TLS: ${OPTION_TEXT}$tls${NC}"
 }
 
+# 更新节点
+update_node() {
+    ! command -v "$NODE_BIN" &>/dev/null && \
+        echo -e "${RED}✗ 节点/客户端未安装，请先安装${NC}" && return
+
+    # 获取系统信息
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    echo -e "${TITLE}▷ 检测系统: ${OPTION_TEXT}${OS} ${ARCH}${NC}"
+
+    # 架构检测
+    case "$ARCH" in
+        "x86_64") suffix="amd64_v1" ;;
+        "i"*"86") suffix="386_sse2" ;;
+        "aarch64"|"arm64") suffix="arm64_v8.0" ;;
+        "armv7l") suffix="arm_7" ;;
+        "armv6l") suffix="arm_6" ;;
+        "armv5l") suffix="arm_5" ;;
+        "mips64") 
+            lscpu 2>/dev/null | grep -qi "little endian" && suffix="mips64le_hardfloat" || suffix="mips64_hardfloat"
+            ;;
+        "mips")
+            float="softfloat"
+            lscpu 2>/dev/null | grep -qi "FPU" && float="hardfloat"
+            lscpu 2>/dev/null | grep -qi "little endian" && suffix="mipsle_$float" || suffix="mips_$float"
+            ;;
+        "riscv64") suffix="riscv64_rva20u64" ;;
+        "s390x") suffix="s390x" ;;
+        *) echo -e "${RED}错误: 不支持的架构: $ARCH${NC}" && return ;;
+    esac
+
+    # 构建下载URL
+    [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
+    file="${NODE_BIN}_${OS}_${suffix}"
+    [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
+    url="https://alist.sian.one/direct/gostc/${file}"
+
+    echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+
+    # 创建临时目录
+    tmp=$(mktemp -d)
+    cd "$tmp" || return
+
+    # 下载文件
+    curl -# -fL -o "$file" "$url" || {
+        echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
+        return
+    }
+
+    # 停止服务
+    echo -e "${YELLOW}▷ 停止节点/客户端服务...${NC}"
+    sudo systemctl stop "$NODE_SVC"
+
+    # 解压文件
+    [[ "$file" == *.zip ]] && \
+        unzip -qo "$file" -d "$tmp" || \
+        tar xzf "$file" -C "$tmp"
+
+    # 更新文件
+    [ -f "$tmp/$NODE_BIN" ] && {
+        sudo mv -f "$tmp/$NODE_BIN" "${NODE_DIR}/${NODE_BIN}"
+        sudo chmod 755 "${NODE_DIR}/${NODE_BIN}"
+        echo -e "${GREEN}✓ 节点/客户端更新成功${NC}"
+    } || {
+        echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
+        sudo systemctl start "$NODE_SVC"
+        return
+    }
+
+    # 清理
+    cd - >/dev/null || return
+    rm -rf "$tmp"
+
+    # 启动服务
+    echo -e "${YELLOW}▷ 启动节点/客户端服务...${NC}"
+    sudo systemctl start "$NODE_SVC"
+
+    # 检查状态
+    sleep 2
+    sudo systemctl is-active --quiet "$NODE_SVC" && \
+        echo -e "${GREEN}✓ 节点/客户端已成功启动${NC}" || \
+        echo -e "${YELLOW}⚠ 节点/客户端启动可能存在问题${NC}"
+}
+
 # 显示工具箱信息
 show_info() {
     # 获取服务端文件修改时间
