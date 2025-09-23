@@ -1,8 +1,10 @@
 #!/bin/bash
 
 # 工具箱版本和更新日志
-TOOL_VERSION="1.7.1"
+TOOL_VERSION="1.7.3"
 CHANGELOG=(
+"1.7.3 - 统一备份目录变量为SERVER_BF，修复备份路径冲突"
+"1.7.2 - 添加显示版本号跟更新时间，添加备份功能，系统信息显示"
 "1.7.1 - 其他下版本号，啥也没更新好像是"
 "1.7.0 - 极致代码精简、统一架构处理、菜单系统重构、用户交互优化、错误处理强化、服务操作统一、减少50%的系统调用、下载和安装流程合并、服务状态检测优化、避免不必要的临时文件"
 "1.6.0 - 代码结构优化，精简40%代码，移除了所有非必要变量和冗余代码、功能函数精简、架构检测优化、安装流程简化、用户交互改进、变量命名优化、代码结构扁平化"
@@ -45,9 +47,10 @@ NODE_SVC="gostc"
 SERVER_DIR="/usr/local/gostc-admin"
 SERVER_BIN="server"
 SERVER_SVC="gostc-admin"
-SERVER_CFG="${SERVER_DIR}/config.yml"
+SERVER_CFG="${SERVER_DIR}/config.yaml"
 BACKUP_DIR="${SERVER_DIR}/data"
-sudo mkdir -p "$BACKUP_DIR"
+SERVER_BF="/usr/local/gostc-admin/data"
+sudo mkdir -p "$SERVER_BF"
 version_type=$(cat "$SERVER_DIR/version.txt")
 
 # 安装模式检测
@@ -83,6 +86,9 @@ server_status() { get_service_status "$SERVER_SVC" "${SERVER_DIR}/${SERVER_BIN}"
 
 # 节点状态
 node_status() { get_service_status "$NODE_SVC" "${NODE_DIR}/${NODE_BIN}"; }
+
+# 备份保留天数（默认30天）
+BACKUP_RETAIN_DAYS=30
 
 # 卸载工具箱
 uninstall_toolbox() {
@@ -129,6 +135,132 @@ check_update() {
     }
     echo -e "${RED}✗ 更新失败${NC}"
 }
+
+# 其他功能菜单
+other_functions() {
+     while :; do
+     echo ""
+     echo -e "${TITLE}▶ 其他功能${NC}"
+     echo -e "${SEPARATOR}==================================================${NC}"
+     echo -e "${OPTION_NUM}1. ${OPTION_TEXT}显示系统信息${NC}"
+     echo -e "${OPTION_NUM}2. ${OPTION_TEXT}备份服务端配置${NC}"
+     echo -e "${OPTION_NUM}3. ${OPTION_TEXT}恢复服务端配置${NC}"
+     echo -e "${OPTION_NUM}4. ${OPTION_TEXT}自动备份服务端${NC}"
+     echo -e "${OPTION_NUM}5. ${OPTION_TEXT}修改备份保留天数${NC}"
+     echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回主菜单${NC}"
+     echo -e "${SEPARATOR}==================================================${NC}"
+
+     read -rp "请输入选项: " choice
+     case $choice in
+     1)
+     echo -e "${YELLOW}▶ 系统信息${NC}"
+     echo -e "${TITLE}操作系统: ${OPTION_TEXT}$(uname -s) $(uname -m)${NC}"
+     echo -e "${TITLE}内核版本: ${OPTION_TEXT}$(uname -r)${NC}"
+     echo -e "${TITLE}主机名: ${OPTION_TEXT}$(hostname)${NC}"
+     echo -e "${TITLE}CPU信息: ${OPTION_TEXT}$(grep -m1 "model name" /proc/cpuinfo | cut -d':' -f2 | sed 's/^[ \t]*//')${NC}"
+     echo -e "${TITLE}内存信息: ${OPTION_TEXT}$(free -h | grep Mem | awk '{print $2}')${NC}"
+     ;;
+     2)
+    if [ -f "$SERVER_CFG" ]; then
+    # 执行备份
+    backup_file="${SERVER_BF}/config_$(date +%Y%m%d%H%M%S).yaml"
+    sudo mkdir -p "$SERVER_BF"
+    sudo cp "$SERVER_CFG" "$backup_file"
+    echo -e "${GREEN}✓ 配置已备份到: ${OPTION_TEXT}$backup_file${NC}"
+    
+    # 新增：自动清理旧备份（保留30天）
+    sudo find "${SERVER_BF}" -name "config_*.yaml" -mtime +${BACKUP_RETAIN_DAYS} -delete -print | while read -r file; do
+    echo -e "${YELLOW}▷ 已清理过期备份: ${file}${NC}"
+    done
+    else
+    echo -e "${RED}✗ 未找到服务端配置文件${NC}"
+     fi
+     ;;
+     3)
+    echo -e "${YELLOW}▶ 可用的备份文件（最近${BACKUP_RETAIN_DAYS}天内）${NC}"
+# 获取有效备份文件并按时间排序
+    valid_backups=($(sudo find "${SERVER_BF}" -name "*.yaml" -mtime -${BACKUP_RETAIN_DAYS} 2>/dev/null | sort -r))
+    if [ ${#valid_backups[@]} -gt 0 ]; then
+    echo -e "${SEPARATOR}==================================================${NC}"
+    for i in "${!valid_backups[@]}"; do
+    echo -e "${OPTION_NUM}$((i+1)). ${OPTION_TEXT}${valid_backups[i]}${NC}"
+    done
+    echo -e "${SEPARATOR}==================================================${NC}"
+
+    read -rp "请输入要恢复的备份编号 (1-${#valid_backups[@]}): " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#valid_backups[@]} ]; then
+    backup_file="${valid_backups[$((choice-1))]}"
+    sudo cp "$backup_file" "$SERVER_CFG"
+    echo -e "${GREEN}✓ 配置已从 ${OPTION_TEXT}$backup_file${GREEN} 恢复${NC}"
+    echo -e "${YELLOW}需要重启服务使更改生效${NC}"
+    else
+    echo -e "${RED}✗ 无效的备份编号${NC}"
+    fi
+    else
+    echo -e "${YELLOW}未找到有效备份文件${NC}"
+    fi
+    ;;
+    5)
+   echo -e "${YELLOW}▶ 当前备份保留天数: ${OPTION_TEXT}${BACKUP_RETAIN_DAYS}天${NC}"
+   read -p "请输入新的保留天数: " new_days
+   if [[ "$new_days" =~ ^[0-9]+$ ]] && [ "$new_days" -gt 0 ]; then
+   BACKUP_RETAIN_DAYS=$new_days
+   echo -e "${GREEN}✓ 已修改为保留${new_days}天${NC}"
+   else
+   echo -e "${RED}✗ 请输入有效正整数${NC}"
+   fi
+   ;;
+    4)
+   echo -e "${YELLOW}▶ 自动备份设置${NC}"
+   echo -e "${SEPARATOR}==================================================${NC}"
+   echo -e "${OPTION_NUM}1. ${OPTION_TEXT}每小时备份${NC}"
+   echo -e "${OPTION_NUM}2. ${OPTION_TEXT}每天备份${NC}"
+   echo -e "${OPTION_NUM}3. ${OPTION_TEXT}每周备份${NC}"
+   echo -e "${OPTION_NUM}4. ${OPTION_TEXT}自定义间隔${NC}"
+
+   read -rp "请选择备份频率: " freq
+   case $freq in
+   1) cron="0 * * * *"; desc="每小时" ;;
+   2) cron="0 0 * * *"; desc="每天" ;;
+   3) cron="0 0 * * 0"; desc="每周" ;;
+   4)
+    read -p "输入cron表达式(如'0 0 * * *'): " cron
+    desc="自定义"
+    ;;
+    esac
+# 创建备份脚本
+backup_script="/usr/local/bin/gostc_backup.sh"
+sudo tee "$backup_script" > /dev/null <<'EOF'
+#!/bin/bash
+[ -f "$SERVER_CFG" ] && {
+backup_file="${SERVER_BF}/config_$(date +%Y%m%d%H%M%S).yaml"
+log_file="${SERVER_BF}/backup.log"
+
+# 执行备份
+if cp "$SERVER_CFG" "$backup_file"; then
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] 备份成功: $backup_file" >> "$log_file"
+else
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] 备份失败" >> "$log_file"
+fi
+
+# 清理旧备份（保持原有BACKUP_RETAIN_DAYS变量）
+find "${SERVER_BF}" -name "config_*.yaml" -mtime +${BACKUP_RETAIN_DAYS} -delete -print | while read -r file; do
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] 清理过期备份: $file" >> "$log_file"
+done
+}
+EOF
+sudo chmod +x "$backup_script"
+
+# 设置cron任务
+(crontab -l 2>/dev/null | grep -v "$backup_script"; echo "$cron $backup_script") | crontab -
+echo -e "${GREEN}✓ 已设置${desc}自动备份${NC}"
+;;
+0) return ;;
+*) echo -e "${RED}无效选项，请重新选择${NC}" ;;
+esac
+done
+}
+
 
 # 服务管理
 service_action() {
@@ -326,8 +458,8 @@ install_server() {
     # 更新模式：保留配置文件
     $update_mode && {
         echo -e "${YELLOW}▷ 更新模式: 保留配置文件${NC}"
-        sudo cp -f "$SERVER_CFG" "${BACKUP_DIR}/config_$(date +%Y%m%d%H%M%S).yml.bak" 2>/dev/null
-        sudo find "${SERVER_DIR}" -maxdepth 1 -type f! -name '*.yml' -delete
+        sudo cp -f "$SERVER_CFG" "${SERVER_BF}/config_$(date +%Y%m%d%H%M%S).yaml.bak" 2>/dev/null
+        sudo find "${SERVER_DIR}" -maxdepth 1 -type f! -name '*.yaml' -delete
         sudo mv -f "${SERVER_CFG}.bak" "$SERVER_CFG" 2>/dev/null
     } || sudo rm -f "$SERVER_DIR/$SERVER_BIN"
 
@@ -729,6 +861,20 @@ show_info() {
     echo -e "${SEPARATOR}==================================================${NC}"
     echo -e "${TITLE} GOSTC 服务管理工具箱 v${TOOL_VERSION} ${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
+    echo -e "${YELLOW}▶ 自动备份状态${NC}"
+    if crontab -l 2>/dev/null | grep -q "gostc_backup.sh"; then
+    cron_job=$(crontab -l | grep "gostc_backup.sh")
+    echo -e "${GREEN}✓ 已启用${NC}"
+    echo -e "${TITLE}▷ 备份频率: ${OPTION_TEXT}$(echo "$cron_job" | awk '{print $1" "$2" "$3" "$4" "$5}')${NC}"
+    else
+    echo -e "${YELLOW}⚠ 未启用${NC}"
+    fi
+    # 显示最近备份文件（需确保SERVER_BF变量已定义）
+    latest_backup=$(sudo ls -t "${SERVER_BF}/config_"* 2>/dev/null | head -1)
+    [ -n "$latest_backup" ] && \
+    echo -e "${TITLE}▷ 最近备份时间: ${OPTION_TEXT}$(sudo stat -c "%y" "$latest_backup" | cut -d'.' -f1)${NC}" || \
+    echo -e "${YELLOW}▷ 无备份记录${NC}"
+    echo -e "当前保留天数: ${BACKUP_RETAIN_DAYS}天（共有$(ls ${SERVER_BF}/*.yaml 2>/dev/null | wc -l)个备份）"
     # 显示当前安装版本
     if [ -f "$SERVER_DIR/version.txt" ]; then
     installed_version=$(cat "$SERVER_DIR/version.txt")
@@ -883,7 +1029,7 @@ check_server_update() {
         sudo systemctl stop "$SERVER_SVC"
         
         # 备份配置
-        sudo cp -f "$SERVER_CFG" "${BACKUP_DIR}/config_$(date +%Y%m%d%H%M%S).yml.bak"
+        sudo cp -f "$SERVER_CFG" "${SERVER_BF}/config_$(date +%Y%m%d%H%M%S).yaml.bak"
         
         # 下载并解压新版本
         curl -# -fL -o "$file" "$url" || {
@@ -937,6 +1083,7 @@ main_menu() {
         echo -e "${OPTION_NUM}3. ${OPTION_TEXT}检查更新${NC}"
         echo -e "${OPTION_NUM}4. ${OPTION_TEXT}检查服务端更新${NC}"
         echo -e "${OPTION_NUM}5. ${OPTION_TEXT}卸载工具箱${NC}"
+        echo -e "${OPTION_NUM}6. ${OPTION_TEXT}其他功能${NC}"  # 新增的选项
         echo -e "${OPTION_NUM}0. ${OPTION_TEXT}退出${NC}"
         echo -e "${SEPARATOR}==================================================${NC}"
 
@@ -947,6 +1094,7 @@ main_menu() {
             3) check_update ;;
             4) check_server_update ;;
             5) uninstall_toolbox ;;
+            6) other_functions ;;  # 新增的选项处理
             0) 
                 echo -e "${TITLE}▶ 感谢使用 GOSTC 工具箱${NC}"
                 exit 0
