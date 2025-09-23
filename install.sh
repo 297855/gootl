@@ -47,7 +47,7 @@ NODE_SVC="gostc"
 SERVER_DIR="/usr/local/gostc-admin"
 SERVER_BIN="server"
 SERVER_SVC="gostc-admin"
-SERVER_CFG="${SERVER_DIR}/config.yaml"
+SERVER_CFG="${SERVER_DIR}/data/config.yaml"
 BACKUP_DIR="${SERVER_DIR}/data"
 SERVER_BF="/usr/local/gostc-admin/data"
 sudo mkdir -p "$SERVER_BF"
@@ -161,13 +161,13 @@ other_functions() {
      echo -e "${TITLE}内存信息: ${OPTION_TEXT}$(free -h | grep Mem | awk '{print $2}')${NC}"
      ;;
      2)
-    if [ -f "$SERVER_CFG" ]; then
+     if [ -f "$SERVER_CFG" ]; then
     # 执行备份
     backup_file="${SERVER_BF}/config_$(date +%Y%m%d%H%M%S).yaml"
     sudo mkdir -p "$SERVER_BF"
     sudo cp "$SERVER_CFG" "$backup_file"
     echo -e "${GREEN}✓ 配置已备份到: ${OPTION_TEXT}$backup_file${NC}"
-    
+
     # 新增：自动清理旧备份（保留30天）
     sudo find "${SERVER_BF}" -name "config_*.yaml" -mtime +${BACKUP_RETAIN_DAYS} -delete -print | while read -r file; do
     echo -e "${YELLOW}▷ 已清理过期备份: ${file}${NC}"
