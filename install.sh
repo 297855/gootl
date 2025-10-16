@@ -1,7 +1,8 @@
 #!/bin/bash
 # 工具箱版本和更新日志
-TOOL_VERSION="1.7.5"
+TOOL_VERSION="1.7.6"
 CHANGELOG=(
+"1.7.6 - 修复客户端下载失败问题，因为各别机器环境不全添加解决方案"
 "1.7.5 - 修复自动备份问题，添加容器安装客户端，简约检测代码"
 "1.7.4 - 修复备份错误问题"
 "1.7.3 - 统一备份目录变量为SERVER_BF，修复备份路径冲突"
@@ -1331,7 +1332,7 @@ install_server() {
     }
 }
 
-# 安装节点/客户端
+# 安装节点/客户端（已添加备用下载逻辑）
 install_node() {
     # 选择类型
     echo ""
@@ -1357,23 +1358,39 @@ install_node() {
     local arch_suffix=$(get_arch_suffix)
     local OS=$(echo "$arch_suffix" | cut -d'_' -f1)
     file="${NODE_BIN}_${arch_suffix}"
-    # 构建下载URL
+    # 构建主下载URL
     [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
     file="${NODE_BIN}_${OS}_${suffix}"
     [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
     url="https://alist.sian.one/direct/gostc/${file}"
+    # 定义客户端备用下载包（核心新增：指定gostc_linux_amd64.tar.gz）
+    local backup_file_client="gostc_linux_amd64_v1.tar.gz"
+    local backup_url_client="https://alist.sian.one/direct/gostc/${backup_file_client}"  # 可替换为实际备用源
+    
     echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
     # 记录文件修改时间
     mod_time=$(curl -sI "$url" | grep -i "Last-Modified" | cut -d':' -f2- | sed 's/^\s*//;s/\s*$//')
     [ -n "$mod_time" ] && sudo tee "${NODE_DIR}/mod_time.txt" >/dev/null <<< "$mod_time"
-    # 下载文件
+    # 下载文件（核心修改：主下载失败自动切换备用）
     sudo mkdir -p "$NODE_DIR" >/dev/null 2>&1
+    echo -e "${YELLOW}▷ 尝试主源下载...${NC}"
     curl -# -fL -o "$file" "$url" || {
-        echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
-        return
+        # 仅客户端安装时触发备用下载（核心逻辑）
+        if [[ "$type" == "客户端" ]]; then
+            echo -e "${RED}✗ 主源下载失败，自动尝试备用包：${OPTION_TEXT}${backup_file_client}${NC}"
+            curl -# -fL -o "$backup_file_client" "$backup_url_client" || {
+                echo -e "${RED}✗ 备用包下载也失败！${NC}"
+                return 1
+            }
+            # 备用包下载成功，替换为备用文件名继续安装
+            file="$backup_file_client"
+        else
+            echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
+            return 1
+        fi
     }
-    # 解压文件
+    # 解压文件（兼容主备包格式，均为tar.gz）
     echo ""
     echo -e "${TITLE}▶ 正在安装到: ${OPTION_TEXT}${NODE_DIR}${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
@@ -1387,11 +1404,11 @@ install_node() {
         echo -e "${GREEN}✓ 已安装二进制文件: ${OPTION_TEXT}${NODE_DIR}/${NODE_BIN}${NC}"
     } || {
         echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
-        return
+        return 1
     }
-    # 清理
+    # 清理安装包
     rm -f "$file"
-    # 配置
+    # 配置（节点/客户端差异化配置，逻辑不变）
     [[ "$type" == "节点" ]] && configure_node || configure_client
 }
 
