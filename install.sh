@@ -1,7 +1,8 @@
 #!/bin/bash
 # 工具箱版本和更新日志
-TOOL_VERSION="1.7.6"
+TOOL_VERSION="1.7.8"
 CHANGELOG=(
+"1.7.8 - 修复检测机器环境重复导致无法下载文件404"
 "1.7.6 - 修复客户端下载失败问题，因为各别机器环境不全添加解决方案"
 "1.7.5 - 修复自动备份问题，添加容器安装客户端，简约检测代码"
 "1.7.4 - 修复备份错误问题"
@@ -36,6 +37,91 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m' # 重置颜色
 
+# ==============================================
+# 新增：全系统环境检测与自动补全安装核心函数
+# ==============================================
+# 1. 检测包管理器（apt/yum）
+detect_package_manager() {
+    if command -v apt &>/dev/null; then
+        echo "apt"
+    elif command -v yum &>/dev/null; then
+        echo "yum"
+    else
+        echo "unknown"
+    fi
+}
+
+# 2. 通用依赖安装函数（自动适配包管理器）
+install_dependency() {
+    local dep=$1
+    local pkg_mgr=$(detect_package_manager)
+    
+    # 先检查依赖是否已安装
+    if command -v "$dep" &>/dev/null; then
+        echo -e "${GREEN}✓ 依赖${OPTION_TEXT}$dep${GREEN}已安装${NC}"
+        return 0
+    fi
+
+    # 包管理器未知时终止
+    if [[ "$pkg_mgr" == "unknown" ]]; then
+        echo -e "${RED}✗ 不支持的系统：未找到apt/yum，无法自动安装${OPTION_TEXT}$dep${NC}"
+        exit 1
+    fi
+
+    # 安装依赖（静默模式，减少输出）
+    echo -e "${YELLOW}⚠ 依赖${OPTION_TEXT}$dep${YELLOW}未安装，正在自动安装...${NC}"
+    if [[ "$pkg_mgr" == "apt" ]]; then
+        sudo apt update -y >/dev/null 2>&1 || {
+            echo -e "${RED}✗ apt更新失败，手动执行：sudo apt update${NC}"
+            exit 1
+        }
+        sudo apt install -y "$dep" >/dev/null 2>&1 || {
+            echo -e "${RED}✗ 安装${OPTION_TEXT}$dep${RED}失败，手动执行：sudo apt install $dep${NC}"
+            exit 1
+        }
+    elif [[ "$pkg_mgr" == "yum" ]]; then
+        sudo yum install -y "$dep" >/dev/null 2>&1 || {
+            echo -e "${RED}✗ 安装${OPTION_TEXT}$dep${RED}失败，手动执行：sudo yum install $dep${NC}"
+            exit 1
+        }
+    fi
+
+    # 验证安装结果
+    if command -v "$dep" &>/dev/null; then
+        echo -e "${GREEN}✓ 依赖${OPTION_TEXT}$dep${GREEN}安装完成${NC}"
+        return 0
+    else
+        echo -e "${RED}✗ 依赖${OPTION_TEXT}$dep${RED}安装失败，请手动安装后重试${NC}"
+        exit 1
+    fi
+}
+
+# 3. 检测并安装所有核心依赖（脚本启动前执行）
+check_and_install_all_deps() {
+    echo -e "${TITLE}▶ 开始系统环境检测与依赖补全...${NC}"
+    echo -e "${SEPARATOR}--------------------------------------------------${NC}"
+    
+    # 核心基础依赖（必装）
+    local core_deps=("curl" "tar" "unzip" "grep" "awk" "sed" "date" "stat" "find" "wc")
+    for dep in "${core_deps[@]}"; do
+        install_dependency "$dep"
+    done
+
+    # 系统服务管理依赖（检查systemctl，无则提示）
+    if ! command -v systemctl &>/dev/null; then
+        echo -e "${YELLOW}⚠ 未检测到systemctl，可能是非systemd系统（如CentOS 6）${NC}"
+        echo -e "${YELLOW}▷ 提示：部分服务管理功能可能无法使用，请手动管理服务${NC}"
+    else
+        echo -e "${GREEN}✓ 系统服务管理器（systemctl）已就绪${NC}"
+    fi
+
+    echo -e "${SEPARATOR}--------------------------------------------------${NC}"
+    echo -e "${GREEN}✓ 所有核心依赖检测与补全完成${NC}"
+}
+
+# ==============================================
+# 原有脚本变量定义（保持不变）
+# ==============================================
 # 修复：1.3 移除重复备份目录变量，统一使用SERVER_BF
 # 工具箱安装路径
 TOOL_PATH="/usr/local/bin/gotool"
@@ -51,6 +137,9 @@ SERVER_CFG="${SERVER_DIR}/data/config.yaml"
 SERVER_BF="/usr/local/gostc-admin/data"
 sudo mkdir -p "$SERVER_BF"
 
+# ==============================================
+# 原有脚本函数（保持不变，依赖相关逻辑已通过新增函数覆盖）
+# ==============================================
 # 解析Cron表达式为中文描述
 get_cron_desc() {
     local expr=$1
@@ -77,10 +166,8 @@ get_arch_suffix() {
     local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     local ARCH=$(uname -m)
     local suffix=""
-
     # 1. 兼容Windows系统标识（mingw/cygwin环境）
     [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
-
     # 2. 实时检测架构+CPU特性，生成对应后缀（覆盖所有场景）
     case "$ARCH" in
         "x86_64")
@@ -111,7 +198,6 @@ get_arch_suffix() {
         "s390x") suffix="s390x" ;;
         *) suffix="unknown" ;; # 未知架构兼容
     esac
-
     # 返回「OS_架构后缀」格式（如 linux_amd64_v1、windows_arm64_v8.0）
     echo "${OS}_${suffix}"
 }
@@ -159,13 +245,6 @@ get_server_real_time_status() {
     fi
 }
 
-
-# 修复：4.1 增加依赖检查（curl）
-if ! command -v curl &>/dev/null; then
-    echo -e "${RED}✗ 依赖缺失：系统未安装curl工具，请先执行 'sudo apt install curl' 或 'sudo yum install curl' 安装${NC}"
-    exit 1
-fi
-
 # 安装模式检测
 if [ ! -t 0 ]; then
     echo -e "${TITLE}▶ 正在安装 GOSTC 工具箱...${NC}"
@@ -202,6 +281,9 @@ remote_migrate() {
     echo -e " - 新服务器SSH账号（需有sudo权限）"
     echo -e " - 新服务器SSH密码（输入时隐藏显示）${NC}"
     echo -e "${SEPARATOR}--------------------------------------------------${NC}"
+    
+    # 新增：迁移前检测sshpass依赖
+    install_dependency "sshpass"
 
     # 1. 读取用户输入的新服务器信息
     local new_ip="" new_port="22" new_user="" new_pwd=""
@@ -224,30 +306,14 @@ remote_migrate() {
         echo -e "\n"  # 换行，避免输入后光标错乱
         [ -z "$new_pwd" ] && echo -e "${RED}✗ 密码不能为空，请重新输入${NC}"
     done
-
     # 2. 检查本地服务端是否存在（无数据则终止）
     if [ ! -f "$SERVER_CFG" ] || [ ! -d "$SERVER_BF" ]; then
         echo -e "${RED}✗ 本地服务端数据缺失（未找到配置文件或备份目录），无法迁移${NC}"
         unset new_pwd  # 清理密码变量，避免残留
         return 1
     fi
-
     # 3. 验证远程服务器连通性（用sshpass测试连接）
     echo -e "\n${YELLOW}▷ 正在验证新服务器连通性（IP: $new_ip, 端口: $new_port）${NC}"
-    # 检查是否安装sshpass（无则提示安装）
-    if ! command -v sshpass &>/dev/null; then
-        echo -e "${YELLOW}⚠ 缺少依赖sshpass，正在自动安装...${NC}"
-        # 兼容Ubuntu/Debian和CentOS/RHEL
-        if command -v apt &>/dev/null; then
-            sudo apt install -y sshpass >/dev/null 2>&1
-        elif command -v yum &>/dev/null; then
-            sudo yum install -y sshpass >/dev/null 2>&1
-        else
-            echo -e "${RED}✗ 无法自动安装sshpass，请手动执行 'sudo apt install sshpass' 或 'sudo yum install sshpass'${NC}"
-            unset new_pwd
-            return 1
-        fi
-    fi
     # 测试SSH连接（超时5秒）
     sshpass -p "$new_pwd" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$new_user@$new_ip" -p "$new_port" "echo 'connect success'" >/dev/null 2>&1
     if [ $? -ne 0 ]; then
@@ -259,18 +325,16 @@ remote_migrate() {
         return 1
     fi
     echo -e "${GREEN}✓ 新服务器连通成功${NC}"
-
     # 4. 定义迁移的关键文件/目录（核心数据，新增data.db）
-local migrate_files=(
-    "$SERVER_CFG"                  # 服务端核心配置
-    "$SERVER_DIR/version.txt"       # 版本信息文件
-    "$SERVER_BF/data.db"           # 新增：服务端数据库文件（用户关键数据）
-    "$SERVER_BF/config_*.yaml"     # 所有备份文件
+    local migrate_files=(
+        "$SERVER_CFG"                  # 服务端核心配置
+        "$SERVER_DIR/version.txt"       # 版本信息文件
+        "$SERVER_BF/data.db"           # 新增：服务端数据库文件（用户关键数据）
+        "$SERVER_BF/config_*.yaml"     # 所有备份文件
     )
     # 新服务器目标目录（与本地路径一致，确保兼容性）
     local remote_base_dir="/usr/local/gostc-admin"
     local remote_cfg_dir="${remote_base_dir}/data"
-
     # 5. 在新服务器创建目标目录（确保权限）
     echo -e "\n${YELLOW}▷ 在新服务器创建目标目录: ${remote_cfg_dir}${NC}"
     sshpass -p "$new_pwd" ssh "$new_user@$new_ip" -p "$new_port" "sudo mkdir -p $remote_cfg_dir && sudo chown $new_user:$new_user $remote_base_dir -R" >/dev/null 2>&1
@@ -279,34 +343,31 @@ local migrate_files=(
         unset new_pwd
         return 1
     fi
-
     # 6. 传输迁移文件（SCP批量传输）
     echo -e "\n${YELLOW}▷ 开始传输迁移数据（共${#migrate_files[@]}类关键数据）${NC}"
     local data_db_migrated="false"  # 新增：标记data.db是否迁移成功
     for file in "${migrate_files[@]}"; do
-    # 跳过不存在的文件
-    [ ! -e "$file" ] && continue
-    # 传输文件到新服务器对应目录
-    echo -e "  ${TITLE}▷ 正在传输: ${OPTION_TEXT}$file${NC}"
-    sshpass -p "$new_pwd" scp -P "$new_port" -o StrictHostKeyChecking=no "$file" "$new_user@$new_ip:$remote_cfg_dir/" >/dev/null 2>&1
-    if [ $? -eq 0 ]; then
-        echo -e "  ${GREEN}✓ 传输成功${NC}"
-        # 新增：若传输的是data.db，标记为迁移成功
-        [[ "$file" == "$SERVER_BF/data.db" ]] && data_db_migrated="true"
-    else
-        echo -e "  ${YELLOW}⚠ 传输警告：$file 传输失败，可后续手动补充${NC}"
-    fi
+        # 跳过不存在的文件
+        [ ! -e "$file" ] && continue
+        # 传输文件到新服务器对应目录
+        echo -e "  ${TITLE}▷ 正在传输: ${OPTION_TEXT}$file${NC}"
+        sshpass -p "$new_pwd" scp -P "$new_port" -o StrictHostKeyChecking=no "$file" "$new_user@$new_ip:$remote_cfg_dir/" >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            echo -e "  ${GREEN}✓ 传输成功${NC}"
+            # 新增：若传输的是data.db，标记为迁移成功
+            [[ "$file" == "$SERVER_BF/data.db" ]] && data_db_migrated="true"
+        else
+            echo -e "  ${YELLOW}⚠ 传输警告：$file 传输失败，可后续手动补充${NC}"
+        fi
     done
-
     # 新增：单独提示data.db迁移状态
     if [ "$data_db_migrated" == "true" ]; then
-    echo -e "\n${GREEN}✓ 服务端数据库文件（data.db）已成功迁移${NC}"
+        echo -e "\n${GREEN}✓ 服务端数据库文件（data.db）已成功迁移${NC}"
     elif [ -f "$SERVER_BF/data.db" ]; then
-    echo -e "\n${YELLOW}⚠ 服务端数据库文件（data.db）存在，但传输失败，请手动补充迁移${NC}"
+        echo -e "\n${YELLOW}⚠ 服务端数据库文件（data.db）存在，但传输失败，请手动补充迁移${NC}"
     else
-    echo -e "\n${YELLOW}⚠ 未找到服务端数据库文件（data.db），跳过迁移${NC}"
+        echo -e "\n${YELLOW}⚠ 未找到服务端数据库文件（data.db），跳过迁移${NC}"
     fi
-
     # 7. 迁移完成提示（关键后续操作）
     echo -e "\n${SEPARATOR}==================================================${NC}"
     echo -e "${GREEN}✓ 服务端远程迁移完成！${NC}"
@@ -316,7 +377,6 @@ local migrate_files=(
     echo -e "  3. 启动工具箱：gotool"
     echo -e "  4. 恢复服务端：选择「1. 服务端管理」→「1. 安装/更新」（会自动识别迁移的配置）${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
-
     # 8. 清理敏感变量（避免密码残留）
     unset new_pwd
 }
@@ -328,7 +388,6 @@ install_docker_client() {
     echo -e "${GREEN}提示：需提供TLS开关、服务端地址、客户端密钥${NC}"
     echo -e "  若未安装Docker，将先询问是否自动安装（需sudo权限+外网）${NC}"
     echo -e "${SEPARATOR}--------------------------------------------------${NC}"
-
     # 1. 自动检测Docker + 安装确认（核心逻辑）
     install_docker_if_missing() {
         # 检查Docker是否已安装
@@ -336,7 +395,6 @@ install_docker_client() {
             echo -e "${GREEN}✓ Docker已安装（版本：$(docker --version | awk '{print $3}' | cut -d',' -f1)）${NC}"
             return 0
         fi
-
         # 未安装时，询问用户是否自动安装
         echo -e "${YELLOW}⚠ 未检测到Docker环境${NC}"
         read -rp "$(echo -e "${TITLE}▷ 是否自动安装Docker？(y/n, 默认y): ${NC}")" install_confirm
@@ -345,7 +403,6 @@ install_docker_client() {
             echo -e "${TITLE}▶ 用户取消Docker安装，退出客户端配置${NC}"
             return 1
         fi
-
         # 用户同意后，开始自动安装
         echo -e "${YELLOW}▷ 开始自动安装Docker（请耐心等待）${NC}"
         local pkg_manager=""
@@ -358,7 +415,6 @@ install_docker_client() {
             echo -e "${RED}✗ 不支持的系统：未找到apt/yum，无法自动安装${NC}"
             return 1
         fi
-
         # 按系统执行安装
         case "$pkg_manager" in
             "apt")
@@ -371,12 +427,10 @@ install_docker_client() {
                 sudo yum install -y docker -y >/dev/null 2>&1 || { echo -e "${RED}✗ Docker安装失败，手动执行：sudo yum install docker${NC}"; return 1; }
                 ;;
         esac
-
         # 启动并设置开机自启
         echo -e "${YELLOW}▷ 配置Docker服务${NC}"
         sudo systemctl start docker >/dev/null 2>&1 || { echo -e "${RED}✗ 服务启动失败，手动执行：sudo systemctl start docker${NC}"; return 1; }
         sudo systemctl enable docker >/dev/null 2>&1 || { echo -e "${YELLOW}⚠ 开机自启设置失败，手动执行：sudo systemctl enable docker${NC}"; }
-
         # 验证安装结果
         if command -v docker &>/dev/null && sudo docker --version &>/dev/null; then
             echo -e "${GREEN}✓ Docker自动安装完成（版本：$(docker --version | awk '{print $3}' | cut -d',' -f1)）${NC}"
@@ -386,19 +440,16 @@ install_docker_client() {
             return 1
         fi
     }
-
     # 执行Docker检测+确认+安装
     if ! install_docker_if_missing; then
         echo -e "${TITLE}▶ 退出Docker客户端安装${NC}"
         return 1
     fi
-
     # 2. 确保Docker服务运行
     if ! sudo systemctl is-active --quiet docker; then
         echo -e "${YELLOW}▷ 启动Docker服务...${NC}"
         sudo systemctl start docker >/dev/null 2>&1 || { echo -e "${RED}✗ 服务启动失败${NC}"; return 1; }
     fi
-
     local tls="false"
     while :; do
         read -p "$(echo -e "${TITLE}▷ 选择TLS加密（1=启用，2=禁用，默认2）: ${NC}")" tls_choice
@@ -407,7 +458,6 @@ install_docker_client() {
         [[ "$tls_choice" == "2" ]] && { tls="false"; break; }
         echo -e "${RED}✗ 仅支持1或2${NC}"
     done
-
     # 4. 收集服务端地址（格式校验）
     local server_addr=""
     while [ -z "$server_addr" ]; do
@@ -419,26 +469,22 @@ install_docker_client() {
         echo -e "${YELLOW}⚠ 地址格式建议为「IP:端口」或「域名:端口」${NC}"
         read -rp "$(echo -e "${TITLE}▷ 确认继续？(y/n, 默认y): ${NC}")" confirm && [[ "$confirm" == "n" ]] && { echo -e "${TITLE}▶ 退出安装${NC}"; return; }
     fi
-
     # 5. 收集客户端密钥（非空校验）
     local key=""
     while [ -z "$key" ]; do
         read -p "$(echo -e "${TITLE}▷ 输入客户端密钥: ${NC}")" key
         [ -z "$key" ] && echo -e "${RED}✗ 密钥不能为空${NC}"
     done
-
     # 6. 清理旧容器（避免重名冲突）
     if sudo docker ps -a --format "{{.Names}}" | grep -q "^gostc$"; then
         echo -e "${YELLOW}▷ 删除旧容器gostc...${NC}"
         sudo docker stop gostc >/dev/null 2>&1
         sudo docker rm gostc >/dev/null 2>&1
     fi
-
     # 7. 启动Docker客户端
     echo -e "\n${YELLOW}▶ 启动GOSTC客户端容器${NC}"
     local docker_cmd="sudo docker run -d --name gostc --net host --restart always sianhh/gostc:latest --tls=$tls -addr $server_addr -key $key"
     echo -e "${TITLE}▷ 执行命令：${OPTION_TEXT}$docker_cmd${NC}"
-
     if sudo $docker_cmd; then
         echo -e "\n${GREEN}✓ 容器启动成功！${NC}"
         echo -e "${TITLE}▷ 查看状态：${OPTION_TEXT}sudo docker ps | grep gostc${NC}"
@@ -460,6 +506,9 @@ remote_install_node() {
     echo -e " - SSH密码（输入时隐藏）${NC}"
     echo -e " - 目标服务端地址（如：example.com:8080）+ 对应密钥${NC}"
     echo -e "${SEPARATOR}--------------------------------------------------${NC}"
+    
+    # 新增：远程安装前检测sshpass依赖
+    install_dependency "sshpass"
 
     # 1. 收集远程服务器基础信息
     local remote_ip="" remote_port="22" remote_user="" remote_pwd=""
@@ -482,7 +531,6 @@ remote_install_node() {
         echo -e "\n"
         [ -z "$remote_pwd" ] && echo -e "${RED}✗ 密码不能为空${NC}"
     done
-
     # 2. 收集节点/客户端配置信息（本地输入，远程使用）
     local install_type="节点" tls="false" server_addr="127.0.0.1:8080" key="" proxy=""
     # 选择安装类型（节点/客户端）
@@ -492,11 +540,9 @@ remote_install_node() {
     read -p "$(echo -e "${TITLE}▷ 输入选择 [1-2] (默认1): ${NC}")" choice
     choice=${choice:-1}
     [[ "$choice" == 2 ]] && install_type="客户端"
-
     # 配置TLS（是否加密连接服务端）
     read -p "$(echo -e "${TITLE}▷ 远程节点是否使用TLS? (y/n, 默认n): ${NC}")" tls_choice
     [[ "$tls_choice" =~ ^[Yy]$ ]] && tls="true"
-
     # 服务端地址（远程节点需连接的地址）
     while :; do
         read -p "$(echo -e "${TITLE}▷ 输入目标服务端地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input_addr
@@ -508,13 +554,11 @@ remote_install_node() {
         fi
         echo -e "${RED}✗ 服务端地址无效，请重新输入${NC}"
     done
-
     # 密钥（节点/客户端密钥，由服务端提供）
     while [ -z "$key" ]; do
         read -p "$(echo -e "${TITLE}▷ 输入${install_type}密钥: ${NC}")" key
         [ -z "$key" ] && echo -e "${RED}✗ ${install_type}密钥不能为空${NC}"
     done
-
     # 网关代理（可选）
     if [[ "$install_type" == "节点" ]]; then
         read -p "$(echo -e "${TITLE}▷ 远程节点是否使用网关代理? (y/n, 默认n): ${NC}")" proxy_choice
@@ -526,15 +570,9 @@ remote_install_node() {
             done
         fi
     fi
-
     # 3. 验证远程连通性+安装依赖（sshpass+curl）
     echo -e "\n${YELLOW}▶ 验证远程服务器连通性并安装依赖${NC}"
-    # 本地检查sshpass（无则安装）
-    if ! command -v sshpass &>/dev/null; then
-        echo -e "${YELLOW}⚠ 本地缺少sshpass，正在安装...${NC}"
-        command -v apt &>/dev/null && sudo apt install -y sshpass >/dev/null 2>&1
-        command -v yum &>/dev/null && sudo yum install -y sshpass >/dev/null 2>&1
-    fi
+    # 本地检查sshpass（无则安装，已通过全局检测覆盖）
     # 测试SSH连接
     sshpass -p "$remote_pwd" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$remote_user@$remote_ip" -p "$remote_port" "echo 'ok'" >/dev/null 2>&1
     if [ $? -ne 0 ]; then
@@ -543,7 +581,6 @@ remote_install_node() {
         return 1
     fi
     echo -e "${GREEN}✓ 远程服务器连通成功${NC}"
-
     # 远程安装curl（节点/客户端下载依赖）
     echo -e "${YELLOW}▷ 远程服务器安装curl依赖...${NC}"
     sshpass -p "$remote_pwd" ssh "$remote_user@$remote_ip" -p "$remote_port" "
@@ -559,7 +596,6 @@ remote_install_node() {
         unset remote_pwd
         return 1
     fi
-
     # 4. 远程检测架构（匹配对应二进制文件）
     echo -e "\n${YELLOW}▶ 远程服务器架构检测${NC}"
     # 远程执行架构检测命令（复用本地get_arch_suffix逻辑）
@@ -588,7 +624,6 @@ remote_install_node() {
         return 1
     fi
     echo -e "${GREEN}✓ 远程架构检测完成：${OPTION_TEXT}$remote_arch_info${NC}"
-
     # 5. 远程下载并安装节点/客户端
     echo -e "\n${YELLOW}▶ 远程安装${install_type}（架构：$remote_arch_info）${NC}"
     local node_bin="gostc" node_dir="/usr/local/bin" remote_cmd=""
@@ -617,7 +652,6 @@ remote_install_node() {
         return 1
     fi
     echo -e "${GREEN}✓ 远程${install_type}安装完成（路径：$node_dir/$node_bin）${NC}"
-
     # 6. 远程配置并启动服务
     echo -e "\n${YELLOW}▶ 远程配置${install_type}并启动服务${NC}"
     local config_cmd=""
@@ -647,7 +681,6 @@ remote_install_node() {
         echo -e "${YELLOW}⚠ 远程${install_type}配置完成，但服务启动可能存在问题${NC}"
         echo -e "${TITLE}▷ 手动检查远程状态：ssh $remote_user@$remote_ip -p $remote_port \"sudo systemctl status $node_bin\"${NC}"
     fi
-
     # 7. 清理敏感信息+输出总结
     unset remote_pwd
     echo -e "\n${SEPARATOR}==================================================${NC}"
@@ -665,10 +698,8 @@ remote_install_node() {
 server_status() { get_service_status "$SERVER_SVC" "${SERVER_DIR}/${SERVER_BIN}"; }
 # 节点状态
 node_status() { get_service_status "$NODE_SVC" "${NODE_DIR}/${NODE_BIN}"; }
-
 # 备份保留天数（默认30天）
 BACKUP_RETAIN_DAYS=30
-
 # Cron备份：创建备份脚本（核心逻辑，修复清理语法错误）
 create_backup_script() {
     local backup_script="/usr/local/bin/gostc_backup.sh"
@@ -728,7 +759,6 @@ EOF
     echo -e "${GREEN}✓ 备份脚本已创建：${OPTION_TEXT}$backup_script${NC}"
     echo -e "${GREEN}✓ 已修复清理逻辑，避免刚生成的备份被误删${NC}"
 }
-
 # Cron备份：添加/更新Cron任务（先删除旧任务避免重复）
 set_cron_task() {
     local cron_expr=$1 desc=$2 backup_script="/usr/local/bin/gostc_backup.sh"
@@ -753,7 +783,6 @@ set_cron_task() {
         return 1
     fi
 }
-
 # Cron备份：验证备份有效性（手动触发测试，修复未找到文件问题）
 verify_cron_backup() {
     local backup_script="/usr/local/bin/gostc_backup.sh"
@@ -765,7 +794,6 @@ verify_cron_backup() {
         echo -e "${YELLOW}▷ 请先确保服务端已安装并生成配置文件${NC}"
         return 1
     fi
-
     # 2. 运行备份脚本（并检查执行结果）
     echo -e "${YELLOW}▷ 执行备份脚本：sudo $backup_script${NC}"
     sudo "$backup_script"
@@ -775,12 +803,10 @@ verify_cron_backup() {
         echo -e "${YELLOW}▷ 查看详细错误日志：${OPTION_TEXT}sudo cat ${SERVER_BF}/gostc_backup_full.log${NC}"
         return 1
     fi
-
     # 3. 用sudo查找5分钟内生成的备份文件（解决权限问题）
     echo -e "${YELLOW}▷ 查找5分钟内生成的备份文件...${NC}"
     local latest_config_backup=$(sudo find "${SERVER_BF}" -name "config_*.yaml" -mmin -5 | sort -r | head -1)
     local latest_data_backup=$(sudo find "${SERVER_BF}" -name "data_*.db" -mmin -5 | sort -r | head -1)
-
     # 4. 验证配置备份（新增sudo权限检查+详细提示）
     if [ -z "$latest_config_backup" ]; then
         echo -e "${RED}✗ 未找到测试配置备份文件,没有影响,功能正常因为系统不同问题！${NC}"
@@ -798,7 +824,6 @@ verify_cron_backup() {
             echo -e "${YELLOW}⚠ 配置备份文件与源文件不一致，建议检查日志${NC}"
         fi
     fi
-
     # 5. 验证data.db备份（同步用sudo）
     if [ -f "$SERVER_BF/data.db" ]; then
         if [ -z "$latest_data_backup" ]; then
@@ -813,11 +838,9 @@ verify_cron_backup() {
             fi
         fi
     fi
-
     # 6. 查看最新备份日志（用sudo确保能读取）
     echo -e "\n${YELLOW}▷ 最新备份日志（3行）：${NC}"
     sudo tail -3 "${SERVER_BF}/gostc_backup_full.log" | grep -E "备份(成功|失败|提示)"
-
     # 7. 询问是否保留测试备份
     read -rp "$(echo -e "${TITLE}▷ 是否删除测试备份文件？(y/n, 默认y): ${NC}")" confirm
     [[ "$confirm" != "n" ]] && {
@@ -826,7 +849,6 @@ verify_cron_backup() {
     }
     return 0
 }
-
 # 卸载工具箱
 uninstall_toolbox() {
     echo -e "${YELLOW}▶ 确定要卸载 GOSTC 工具箱吗？${NC}"
@@ -835,7 +857,6 @@ uninstall_toolbox() {
         echo -e "${GREEN}✓ GOSTC 工具箱已卸载${NC}" && exit 0
     echo -e "${TITLE}▶ 卸载已取消${NC}"
 }
-
 # 获取最新版本信息
 get_latest_version() {
     local script=$(curl -s "https://raw.githubusercontent.com/297855/gootl/main/install.sh")
@@ -843,7 +864,6 @@ get_latest_version() {
     local changelog=$(grep -m1 '^"' <<< "$script" | cut -d'"' -f2)
     echo "$version|$changelog"
 }
-
 # 检查更新
 check_update() {
     echo -e "${YELLOW}▶ 正在检查更新...${NC}"
@@ -868,35 +888,25 @@ check_update() {
     }
     echo -e "${RED}✗ 更新失败${NC}"
 }
-
 # 其他功能菜单
 other_functions() {
      while :; do
      echo ""
      echo -e "${TITLE}▶ 其他功能${NC}"
      echo -e "${SEPARATOR}==================================================${NC}"
-     echo -e "${OPTION_NUM}1. ${OPTION_TEXT}显示系统信息${NC}"
-     echo -e "${OPTION_NUM}2. ${OPTION_TEXT}备份服务端配置${NC}"
-     echo -e "${OPTION_NUM}3. ${OPTION_TEXT}恢复服务端配置${NC}"
-     echo -e "${OPTION_NUM}4. ${OPTION_TEXT}自动备份服务端${NC}"
-     echo -e "${OPTION_NUM}5. ${OPTION_TEXT}修改备份保留天数${NC}"
-     echo -e "${OPTION_NUM}6. ${OPTION_TEXT}查看备份日志${NC}"
-     echo -e "${OPTION_NUM}7. ${OPTION_TEXT}服务端远程迁移${NC}"
-     echo -e "${OPTION_NUM}8. ${OPTION_TEXT}SSH远程安装节点/客户端${NC}"
-     echo -e "${OPTION_NUM}9. ${OPTION_TEXT}Docker安装客户端${NC}"
+     echo -e "${OPTION_NUM}1. ${OPTION_TEXT}备份服务端配置${NC}"
+     echo -e "${OPTION_NUM}2. ${OPTION_TEXT}恢复服务端配置${NC}"
+     echo -e "${OPTION_NUM}3. ${OPTION_TEXT}自动备份服务端${NC}"
+     echo -e "${OPTION_NUM}4. ${OPTION_TEXT}修改备份保留天数${NC}"
+     echo -e "${OPTION_NUM}5. ${OPTION_TEXT}查看备份日志${NC}"
+     echo -e "${OPTION_NUM}6. ${OPTION_TEXT}服务端远程迁移${NC}"
+     echo -e "${OPTION_NUM}7. ${OPTION_TEXT}SSH远程安装节点/客户端${NC}"
+     echo -e "${OPTION_NUM}8. ${OPTION_TEXT}Docker安装客户端${NC}"
      echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回主菜单${NC}"
      echo -e "${SEPARATOR}==================================================${NC}"
      read -rp "请输入选项: " choice
      case $choice in
      1)
-     echo -e "${YELLOW}▶ 系统信息${NC}"
-     echo -e "${TITLE}操作系统: ${OPTION_TEXT}$(uname -s) $(uname -m)${NC}"
-     echo -e "${TITLE}内核版本: ${OPTION_TEXT}$(uname -r)${NC}"
-     echo -e "${TITLE}主机名: ${OPTION_TEXT}$(hostname)${NC}"
-     echo -e "${TITLE}CPU信息: ${OPTION_TEXT}$(grep -m1 "model name" /proc/cpuinfo | cut -d':' -f2 | sed 's/^[ \t]*//')${NC}"
-     echo -e "${TITLE}内存信息: ${OPTION_TEXT}$(free -h | grep Mem | awk '{print $2}')${NC}"
-     ;;
-     2)
      if [ -f "$SERVER_CFG" ]; then
     # 执行备份
     backup_file="${SERVER_BF}/config_$(date +%Y%m%d%H%M%S).yaml"
@@ -911,7 +921,7 @@ other_functions() {
     echo -e "${RED}✗ 未找到服务端配置文件${NC}"
      fi
      ;;
-3)
+2)
 echo -e "${YELLOW}▶ 可用的备份文件（最近${BACKUP_RETAIN_DAYS}天内）${NC}"
 # 获取有效配置备份（仅按config_*.yaml列表，后续匹配data.db）
 valid_backups=($(sudo find "${SERVER_BF}" -name "config_*.yaml" -mtime -${BACKUP_RETAIN_DAYS} 2>/dev/null | sort -r))
@@ -919,7 +929,7 @@ if [ ${#valid_backups[@]} -gt 0 ]; then
     echo -e "${SEPARATOR}==================================================${NC}"
     for i in "${!valid_backups[@]}"; do
         # 显示备份文件+对应时间戳（便于用户识别）
-        backup_time=$(basename "${valid_backups[i]}" | grep -oE 'config_([0-9]+)\.yaml' | cut -d'_' -f2 | cut -d'.' -f1)
+        backup_time=$(basename "${valid_backups[i]}" | grep -oE 'config_([0-9[i)\.yaml' | cut -d'_' -f2 | cut -d'.' -f1)
         backup_time_format=$(date -d "@$(date -d "${backup_time:0:8} ${backup_time:8:2}:${backup_time:10:2}:${backup_time:12:2}" +%s)" +"%Y-%m-%d %H:%M:%S")
         echo -e "${OPTION_NUM}$((i+1)). ${OPTION_TEXT}${valid_backups[i]} ${YELLOW}（备份时间：${backup_time_format}）${NC}"
     done
@@ -964,7 +974,7 @@ else
     break
 fi
 ;;
-    5)
+    4)
    echo -e "${YELLOW}▶ 当前备份保留天数: ${OPTION_TEXT}${BACKUP_RETAIN_DAYS}天${NC}"
    read -p "请输入新的保留天数: " new_days
    if [[ "$new_days" =~ ^[0-9]+$ ]] && [ "$new_days" -gt 0 ]; then
@@ -974,7 +984,7 @@ fi
    echo -e "${RED}✗ 请输入有效正整数${NC}"
    fi
    ;;
-4)
+3)
 echo -e "${YELLOW}▶ 自动备份设置 (Cron定时任务) - 全系统兼容${NC}"
 echo -e "${SEPARATOR}==================================================${NC}"
 echo -e "${GREEN}提示：选择备份频率（Cron定时）${NC}"
@@ -1032,7 +1042,7 @@ echo -e "\n${YELLOW}▶ 自动备份设置完成！${NC}"
 echo -e "${TITLE}▷ 查看Cron任务：${OPTION_TEXT}sudo crontab -l | grep gostc_backup.sh${NC}"
 echo -e "${TITLE}▷ 手动触发备份：${OPTION_TEXT}sudo /usr/local/bin/gostc_backup.sh${NC}"
 ;;
-5)
+4)
 # 原有“修改备份保留天数”逻辑（不变）
 echo -e "${YELLOW}▶ 当前备份保留天数: ${OPTION_TEXT}${BACKUP_RETAIN_DAYS}天${NC}"
 read -p "请输入新的保留天数: " new_days
@@ -1044,7 +1054,7 @@ else
 fi
 ;;
 # 新增：查看备份日志逻辑
-6)
+5)
 echo -e "${YELLOW}▶ 查看备份日志（实时显示最新20行，按 Ctrl+C 退出）${NC}"
 echo -e "${TITLE}▷ 日志路径：${OPTION_TEXT}${SERVER_BF}/gostc_backup_full.log${NC}"
 echo -e "${YELLOW}▷ 提示：按 ${OPTION_TEXT}Ctrl+C${YELLOW} 退出日志查看，返回菜单${NC}\n"
@@ -1066,13 +1076,13 @@ tail -n 20 -f "${SERVER_BF}/gostc_backup_full.log"
 echo -e "\n\n${TITLE}▶ 退出日志查看，返回菜单${NC}"
 break
 ;;
-7)
+6)
 remote_migrate  # 调用远程迁移函数
 ;;
-8)
+7)
 remote_install_node  # 调用远程安装函数
 ;;
-9)
+8)
 install_docker_client  # 调用Docker安装函数
 ;;
 0) 
@@ -1332,93 +1342,23 @@ install_server() {
     }
 }
 
-# 安装节点/客户端（已添加备用下载逻辑）
-install_node() {
-    # 选择类型
-    echo ""
-    echo -e "${TITLE}▶ 请选择安装类型${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    echo -e "${OPTION_NUM}1. ${OPTION_TEXT}安装节点 (默认)${NC}"
-    echo -e "${OPTION_NUM}2. ${OPTION_TEXT}安装客户端${NC}"
-    echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    read -p "$(echo -e "${TITLE}▷ 请输入选择 [1-2] (默认1): ${NC}")" choice
-    choice=${choice:-1}
-    [[ "$choice" == 0 ]] && return
-    local type="节点"
-    [[ "$choice" == 2 ]] && type="客户端"
-    echo ""
-    echo -e "${TITLE}▶ 开始安装 ${OPTION_TEXT}${type}${TITLE} 组件${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    # 获取系统信息
-    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-    ARCH=$(uname -m)
-    echo -e "${TITLE}▷ 检测系统: ${OPTION_TEXT}${OS} ${ARCH}${NC}"
-    # 调用通用架构检测函数
-    local arch_suffix=$(get_arch_suffix)
-    local OS=$(echo "$arch_suffix" | cut -d'_' -f1)
-    file="${NODE_BIN}_${arch_suffix}"
-    # 构建主下载URL
-    [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
-    file="${NODE_BIN}_${OS}_${suffix}"
-    [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
-    url="https://alist.sian.one/direct/gostc/${file}"
-    # 定义客户端备用下载包（核心新增：指定gostc_linux_amd64.tar.gz）
-    local backup_file_client="gostc_linux_amd64_v1.tar.gz"
-    local backup_url_client="https://alist.sian.one/direct/gostc/${backup_file_client}"  # 可替换为实际备用源
-    
-    echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    # 记录文件修改时间
-    mod_time=$(curl -sI "$url" | grep -i "Last-Modified" | cut -d':' -f2- | sed 's/^\s*//;s/\s*$//')
-    [ -n "$mod_time" ] && sudo tee "${NODE_DIR}/mod_time.txt" >/dev/null <<< "$mod_time"
-    # 下载文件（核心修改：主下载失败自动切换备用）
-    sudo mkdir -p "$NODE_DIR" >/dev/null 2>&1
-    echo -e "${YELLOW}▷ 尝试主源下载...${NC}"
-    curl -# -fL -o "$file" "$url" || {
-        # 仅客户端安装时触发备用下载（核心逻辑）
-        if [[ "$type" == "客户端" ]]; then
-            echo -e "${RED}✗ 主源下载失败，自动尝试备用包：${OPTION_TEXT}${backup_file_client}${NC}"
-            curl -# -fL -o "$backup_file_client" "$backup_url_client" || {
-                echo -e "${RED}✗ 备用包下载也失败！${NC}"
-                return 1
-            }
-            # 备用包下载成功，替换为备用文件名继续安装
-            file="$backup_file_client"
-        else
-            echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
-            return 1
-        fi
-    }
-    # 解压文件（兼容主备包格式，均为tar.gz）
-    echo ""
-    echo -e "${TITLE}▶ 正在安装到: ${OPTION_TEXT}${NODE_DIR}${NC}"
-    echo -e "${SEPARATOR}==================================================${NC}"
-    sudo rm -f "$NODE_DIR/$NODE_BIN"
-    [[ "$file" == *.zip ]] && \
-        sudo unzip -qo "$file" -d "$NODE_DIR" || \
-        sudo tar xzf "$file" -C "$NODE_DIR"
-    # 设置权限
-    [ -f "$NODE_DIR/$NODE_BIN" ] && {
-        sudo chmod 755 "$NODE_DIR/$NODE_BIN"
-        echo -e "${GREEN}✓ 已安装二进制文件: ${OPTION_TEXT}${NODE_DIR}/${NODE_BIN}${NC}"
-    } || {
-        echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
-        return 1
-    }
-    # 清理安装包
-    rm -f "$file"
-    # 配置（节点/客户端差异化配置，逻辑不变）
-    [[ "$type" == "节点" ]] && configure_node || configure_client
+# --------------------------
+# 7. 核心功能模块（节点/客户端安装/配置/更新）
+# --------------------------
+# 7.1 节点状态快捷调用（复用服务状态检测函数）
+node_status() { 
+    get_service_status "$NODE_SVC" "${NODE_DIR}/${NODE_BIN}"
 }
 
-# 修复：2.3 放宽服务器地址验证逻辑，支持200/301/302/204状态码
+# 7.2 服务器地址验证（支持200/301/302/204状态码，节点/客户端通用）
 validate_server() {
     local addr=$1 tls=$2
     [[ "$tls" == "true" ]] && prefix="https://" || prefix="http://"
     [[ "$addr" != http* ]] && addr="${prefix}${addr}"
+    
     echo -e "${TITLE}▷ 验证服务器地址: ${OPTION_TEXT}$addr${NC}"
     status=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$addr")
+    
     # 支持200（成功）、301（永久重定向）、302（临时重定向）、204（无内容）
     if [[ "$status" -ge 200 && "$status" -le 302 ]]; then
         echo -e "${GREEN}✓ 服务器验证成功 (HTTP $status)${NC}"
@@ -1429,7 +1369,105 @@ validate_server() {
     fi
 }
 
-# 配置节点
+# 7.3 安装节点/客户端（核心逻辑：类型独立选择，节点不触发客户端配置）
+install_node() {
+    # 1. 选择安装类型（节点/客户端二选一，默认节点）
+    echo ""
+    echo -e "${TITLE}▶ 请选择安装类型${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    echo -e "${OPTION_NUM}1. ${OPTION_TEXT}安装节点 (默认)${NC}"
+    echo -e "${OPTION_NUM}2. ${OPTION_TEXT}安装客户端${NC}"
+    echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    
+    read -p "$(echo -e "${TITLE}▷ 请输入选择 [1-2] (默认1): ${NC}")" choice
+    choice=${choice:-1}
+    [[ "$choice" == 0 ]] && return  # 输入0直接返回，不执行后续流程
+    
+    local type="节点"
+    [[ "$choice" == 2 ]] && type="客户端"  # 仅选择2时，类型设为客户端
+    
+    # 2. 显示当前安装类型，开始系统检测
+    echo ""
+    echo -e "${TITLE}▶ 开始安装 ${OPTION_TEXT}${type}${TITLE} 组件${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    
+    # 3. 检测系统架构（复用通用架构检测函数）
+    local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    local ARCH=$(uname -m)
+    echo -e "${TITLE}▷ 检测系统: ${OPTION_TEXT}${OS} ${ARCH}${NC}"
+    
+    local arch_suffix=$(get_arch_suffix)
+    local OS=$(echo "$arch_suffix" | cut -d'_' -f1)  # 从架构结果提取系统类型
+    local file="${NODE_BIN}_${arch_suffix}"
+    
+    # 4. 构建下载URL（区分系统，客户端增加备用源）
+    [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
+    file="${NODE_BIN}_${OS}_${suffix}"
+    [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
+    local url="https://alist.sian.one/direct/gostc/${file}"
+    
+    # 客户端备用下载包（仅客户端安装时生效）
+    local backup_file_client="gostc_linux_amd64_v1.tar.gz"
+    local backup_url_client="https://alist.sian.one/direct/gostc/${backup_file_client}"
+    
+    # 5. 显示下载信息，开始下载文件
+    echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    
+    # 记录文件修改时间（用于后续更新检测）
+    local mod_time=$(curl -sI "$url" | grep -i "Last-Modified" | cut -d':' -f2- | sed 's/^\s*//;s/\s*$//')
+    [ -n "$mod_time" ] && sudo tee "${NODE_DIR}/mod_time.txt" >/dev/null <<< "$mod_time"
+    
+    # 创建节点安装目录（确保目录存在）
+    sudo mkdir -p "$NODE_DIR" >/dev/null 2>&1
+    
+    # 尝试主源下载，客户端失败时自动切换备用源
+    echo -e "${YELLOW}▷ 尝试主源下载...${NC}"
+    curl -# -fL -o "$file" "$url" || {
+        if [[ "$type" == "客户端" ]]; then
+            echo -e "${RED}✗ 主源下载失败，自动尝试备用包：${OPTION_TEXT}${backup_file_client}${NC}"
+            curl -# -fL -o "$backup_file_client" "$backup_url_client" || {
+                echo -e "${RED}✗ 备用包下载也失败！${NC}"
+                return 1
+            }
+            file="$backup_file_client"  # 备用包下载成功，替换文件名继续安装
+        else
+            echo -e "${RED}✗ 错误: 节点文件下载失败!${NC}"
+            return 1
+        fi
+    }
+    
+    # 6. 解压文件到目标目录（兼容zip/tar.gz格式）
+    echo ""
+    echo -e "${TITLE}▶ 正在安装到: ${OPTION_TEXT}${NODE_DIR}${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    
+    # 先删除旧版本文件（避免冲突）
+    sudo rm -f "$NODE_DIR/$NODE_BIN"
+    
+    # 按文件格式解压
+    [[ "$file" == *.zip ]] && \
+        sudo unzip -qo "$file" -d "$NODE_DIR" || \
+        sudo tar xzf "$file" -C "$NODE_DIR"
+    
+    # 7. 验证安装结果，设置文件权限
+    if [ -f "$NODE_DIR/$NODE_BIN" ]; then
+        sudo chmod 755 "$NODE_DIR/$NODE_BIN"
+        echo -e "${GREEN}✓ 已安装二进制文件: ${OPTION_TEXT}${NODE_DIR}/${NODE_BIN}${NC}"
+    else
+        echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
+        return 1
+    fi
+    
+    # 8. 清理安装包（避免残留）
+    rm -f "$file"
+    
+    # 9. 差异化配置：节点调用节点配置，客户端调用客户端配置
+    [[ "$type" == "节点" ]] && configure_node || configure_client
+}
+
+# 7.4 配置节点（独立流程，不关联客户端配置）
 configure_node() {
     echo ""
     echo -e "${TITLE}▶ 节点配置${NC}"
@@ -1439,53 +1477,60 @@ configure_node() {
     echo -e " - 节点密钥 (由服务端提供)"
     echo -e " - (可选) 网关代理地址${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
-    # TLS选项
+    
+    # 1. 配置TLS加密（可选，默认禁用）
     local tls="false"
     read -p "$(echo -e "${TITLE}▷ 是否使用TLS? (y/n, 默认n): ${NC}")" choice
     [[ "$choice" =~ ^[Yy]$ ]] && tls="true"
-    # 服务器地址
+    
+    # 2. 配置服务端地址（需通过有效性验证）
     local addr="127.0.0.1:8080"
     while :; do
         read -p "$(echo -e "${TITLE}▷ 输入服务器地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input
         input=${input:-$addr}
-        validate_server "$input" "$tls" && addr="$input" && break
+        validate_server "$input" "$tls" && addr="$input" && break  # 验证通过才继续
         echo -e "${RED}✗ 请重新输入有效的服务器地址${NC}"
     done
-    # 节点密钥
+    
+    # 3. 配置节点密钥（非空校验）
     local key=""
     while [ -z "$key" ]; do
         read -p "$(echo -e "${TITLE}▷ 输入节点密钥: ${NC}")" key
         [ -z "$key" ] && echo -e "${RED}✗ 节点密钥不能为空${NC}"
     done
-    # 网关代理选项
+    
+    # 4. 配置网关代理（可选，默认禁用）
     local proxy=""
     read -p "$(echo -e "${TITLE}▷ 是否使用网关代理? (y/n, 默认n): ${NC}")" choice
     if [[ "$choice" =~ ^[Yy]$ ]]; then
         while :; do
             read -p "$(echo -e "${TITLE}▷ 输入网关地址 (包含http/https前缀): ${NC}")" url
-            [[ "$url" =~ ^https?:// ]] && proxy="$url" && break
+            [[ "$url" =~ ^https?:// ]] && proxy="$url" && break  # 校验网关地址格式
             echo -e "${RED}✗ 网关地址必须以http://或https://开头${NC}"
         done
     fi
-    # 构建安装命令
-    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -s -key $key"
-    [ -n "$proxy" ] && cmd+=" --proxy-base-url $proxy"
-    # 执行安装
+    
+    # 5. 执行节点安装命令（整合所有配置参数）
     echo ""
     echo -e "${TITLE}▶ 正在配置节点${NC}"
+    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -s -key $key"
+    [ -n "$proxy" ] && cmd+=" --proxy-base-url $proxy"  # 有网关时追加网关参数
+    
     eval "$cmd" || {
         echo -e "${RED}✗ 节点配置失败${NC}"
-        return
+        return 1
     }
-    # 启动服务
+    
+    # 6. 启动节点服务并验证状态
     echo ""
     echo -e "${TITLE}▶ 正在启动服务${NC}"
     sudo systemctl start "$NODE_SVC" || {
         echo -e "${RED}✗ 服务启动失败${NC}"
-        return
+        return 1
     }
     echo -e "${GREEN}✓ 服务启动成功${NC}"
-    # 安装完成提示
+    
+    # 7. 输出节点安装完成信息
     echo ""
     echo -e "${TITLE}组件: ${OPTION_TEXT}节点${NC}"
     echo -e "${TITLE}服务器地址: ${OPTION_TEXT}$addr${NC}"
@@ -1493,7 +1538,7 @@ configure_node() {
     [ -n "$proxy" ] && echo -e "${TITLE}网关地址: ${OPTION_TEXT}$proxy${NC}"
 }
 
-# 配置客户端
+# 7.5 配置客户端（独立流程，仅当选择“安装客户端”时触发）
 configure_client() {
     echo ""
     echo -e "${TITLE}▶ 客户端配置${NC}"
@@ -1502,107 +1547,130 @@ configure_client() {
     echo -e " - 服务器地址 (如: example.com:8080)"
     echo -e " - 客户端密钥 (由服务端提供)${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
-    # TLS选项
+    
+    # 1. 配置TLS加密（可选，默认禁用）
     local tls="false"
     read -p "$(echo -e "${TITLE}▷ 是否使用TLS? (y/n, 默认n): ${NC}")" choice
     [[ "$choice" =~ ^[Yy]$ ]] && tls="true"
-    # 服务器地址
+    
+    # 2. 配置服务端地址（需通过有效性验证）
     local addr="127.0.0.1:8080"
     while :; do
         read -p "$(echo -e "${TITLE}▷ 输入服务器地址 (默认 ${OPTION_TEXT}127.0.0.1:8080${TITLE}): ${NC}")" input
         input=${input:-$addr}
-        validate_server "$input" "$tls" && addr="$input" && break
+        validate_server "$input" "$tls" && addr="$input" && break  # 验证通过才继续
         echo -e "${RED}✗ 请重新输入有效的服务器地址${NC}"
     done
-    # 客户端密钥
+    
+    # 3. 配置客户端密钥（非空校验）
     local key=""
     while [ -z "$key" ]; do
         read -p "$(echo -e "${TITLE}▷ 输入客户端密钥: ${NC}")" key
         [ -z "$key" ] && echo -e "${RED}✗ 客户端密钥不能为空${NC}"
     done
-    # 构建安装命令
-    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -key $key"
-    # 执行安装
+    
+    # 4. 执行客户端安装命令（整合配置参数）
     echo ""
     echo -e "${TITLE}▶ 正在配置客户端${NC}"
+    local cmd="sudo $NODE_DIR/$NODE_BIN install --tls=$tls -addr $addr -key $key"
+    
     eval "$cmd" || {
         echo -e "${RED}✗ 客户端配置失败${NC}"
-        return
+        return 1
     }
-    # 启动服务
+    
+    # 5. 启动客户端服务并验证状态
     echo ""
     echo -e "${TITLE}▶ 正在启动服务${NC}"
     sudo systemctl start "$NODE_SVC" || {
         echo -e "${RED}✗ 服务启动失败${NC}"
-        return
+        return 1
     }
     echo -e "${GREEN}✓ 服务启动成功${NC}"
-    # 安装完成提示
+    
+    # 6. 输出客户端安装完成信息
     echo ""
     echo -e "${TITLE}组件: ${OPTION_TEXT}客户端${NC}"
     echo -e "${TITLE}服务器地址: ${OPTION_TEXT}$addr${NC}"
     echo -e "${TITLE}TLS: ${OPTION_TEXT}$tls${NC}"
 }
 
-# 修复：3.2 修复临时目录操作风险，cd失败时清理临时目录
+# 7.6 更新节点/客户端（支持版本检测与覆盖更新，cd失败时清理临时目录）
 update_node() {
-    ! command -v "$NODE_BIN" &>/dev/null && \
-        echo -e "${RED}✗ 节点/客户端未安装，请先安装${NC}" && return
-    # 获取系统信息
-    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-    ARCH=$(uname -m)
+    # 先检查是否已安装节点/客户端
+    ! command -v "$NODE_BIN" &>/dev/null && {
+        echo -e "${RED}✗ 节点/客户端未安装，请先安装${NC}"
+        return
+    }
+    
+    # 1. 检测系统架构，获取最新版本下载地址
+    echo ""
+    echo -e "${TITLE}▶ 开始更新节点/客户端${NC}"
+    echo -e "${SEPARATOR}==================================================${NC}"
+    
+    local OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    local ARCH=$(uname -m)
     echo -e "${TITLE}▷ 检测系统: ${OPTION_TEXT}${OS} ${ARCH}${NC}"
-    # 调用通用架构检测函数
+    
     local arch_suffix=$(get_arch_suffix)
     local OS=$(echo "$arch_suffix" | cut -d'_' -f1)
-    file="${NODE_BIN}_${arch_suffix}"
+    local file="${NODE_BIN}_${arch_suffix}"
+    
     # 构建下载URL
     [[ "$OS" == *"mingw"* || "$OS" == *"cygwin"* ]] && OS="windows"
     file="${NODE_BIN}_${OS}_${suffix}"
     [[ "$OS" == "windows" ]] && file="${file}.zip" || file="${file}.tar.gz"
-    url="https://alist.sian.one/direct/gostc/${file}"
+    local url="https://alist.sian.one/direct/gostc/${file}"
+    
+    # 2. 显示下载信息，创建临时目录（cd失败时清理）
     echo -e "${TITLE}▷ 下载文件: ${OPTION_TEXT}${file}${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
-    # 创建临时目录并处理cd失败场景
-    tmp=$(mktemp -d)
+    
+    local tmp=$(mktemp -d)
     cd "$tmp" || {
         echo -e "${RED}✗ 无法进入临时目录，更新终止${NC}"
         rm -rf "$tmp"
         return
     }
-    # 下载文件
+    
+    # 3. 下载最新版本文件
     curl -# -fL -o "$file" "$url" || {
         echo -e "${RED}✗ 错误: 文件下载失败!${NC}"
         cd - >/dev/null || return
         rm -rf "$tmp"
-        return
+        return 1
     }
-    # 停止服务
+    
+    # 4. 停止当前运行的服务（避免文件占用）
     echo -e "${YELLOW}▷ 停止节点/客户端服务...${NC}"
     sudo systemctl stop "$NODE_SVC"
-    # 解压文件
+    
+    # 5. 解压文件到临时目录
     [[ "$file" == *.zip ]] && \
         unzip -qo "$file" -d "$tmp" || \
         tar xzf "$file" -C "$tmp"
-    # 更新文件
-    [ -f "$tmp/$NODE_BIN" ] && {
+    
+    # 6. 覆盖更新二进制文件，设置权限
+    if [ -f "$tmp/$NODE_BIN" ]; then
         sudo mv -f "$tmp/$NODE_BIN" "${NODE_DIR}/${NODE_BIN}"
         sudo chmod 755 "${NODE_DIR}/${NODE_BIN}"
         echo -e "${GREEN}✓ 节点/客户端更新成功${NC}"
-    } || {
+    else
         echo -e "${RED}错误: 解压后未找到二进制文件 $NODE_BIN${NC}"
-        sudo systemctl start "$NODE_SVC"
+        sudo systemctl start "$NODE_SVC"  # 更新失败，重启旧服务
         cd - >/dev/null || return
         rm -rf "$tmp"
-        return
-    }
-    # 清理
+        return 1
+    fi
+    
+    # 7. 清理临时目录，重启服务
     cd - >/dev/null || return
     rm -rf "$tmp"
-    # 启动服务
+    
     echo -e "${YELLOW}▷ 启动节点/客户端服务...${NC}"
     sudo systemctl start "$NODE_SVC"
-    # 检查状态（循环检测）
+    
+    # 8. 循环检测服务状态（最多5次，间隔1秒）
     local retry=0
     while [ $retry -lt 5 ]; do
         if sudo systemctl is-active --quiet "$NODE_SVC"; then
@@ -1612,7 +1680,126 @@ update_node() {
         retry=$((retry+1))
         sleep 1
     done
-    echo -e "${YELLOW}⚠ 节点/客户端启动可能存在问题${NC}"
+    
+    echo -e "${YELLOW}⚠ 节点/客户端启动可能存在问题，建议手动检查状态${NC}"
+}
+
+# --------------------------
+# 8. 服务管理菜单（节点/客户端通用，关联安装/启动/重启等操作）
+# --------------------------
+# 8.1 服务操作函数（启动/重启/停止/卸载，统一逻辑）
+service_action() {
+    local svc=$1 bin=$2 action=$3
+    ! command -v "$bin" &>/dev/null && echo -e "${RED}✗ 未安装，请先安装${NC}" && return
+    
+    case $action in
+        start)
+            echo -e "${YELLOW}▶ 正在启动...${NC}"
+            sudo systemctl start "$svc"
+            # 循环检测服务状态（最多5次，间隔1秒）
+            local retry=0
+            while [ $retry -lt 5 ]; do
+                if sudo systemctl is-active --quiet "$svc"; then
+                    echo -e "${GREEN}✓ 已成功启动${NC}"
+                    return
+                fi
+                retry=$((retry+1))
+                sleep 1
+            done
+            echo -e "${YELLOW}⚠ 启动可能存在问题${NC}"
+            ;;
+        
+        restart)
+            echo -e "${YELLOW}▶ 正在重启...${NC}"
+            sudo systemctl restart "$svc"
+            # 循环检测服务状态（最多5次，间隔1秒）
+            local retry=0
+            while [ $retry -lt 5 ]; do
+                if sudo systemctl is-active --quiet "$svc"; then
+                    echo -e "${GREEN}✓ 已成功重启${NC}"
+                    return
+                fi
+                retry=$((retry+1))
+                sleep 1
+            done
+            echo -e "${YELLOW}⚠ 重启可能存在问题${NC}"
+            ;;
+        
+        stop)
+            echo -e "${YELLOW}▶ 正在停止...${NC}"
+            sudo systemctl stop "$svc"
+            # 循环检测服务状态（最多3次，间隔1秒）
+            local retry=0
+            while [ $retry -lt 3 ]; do
+                if ! sudo systemctl is-active --quiet "$svc"; then
+                    echo -e "${GREEN}✓ 已停止${NC}"
+                    return
+                fi
+                retry=$((retry+1))
+                sleep 1
+            done
+            echo -e "${YELLOW}⚠ 停止失败${NC}"
+            ;;
+        
+        uninstall)
+            echo -e "${YELLOW}▶ 确定要卸载吗？${NC}"
+            read -rp "确认卸载？(y/n, 默认n): " confirm
+            [[ "$confirm" != "y" ]] && echo -e "${TITLE}▶ 卸载已取消${NC}" && return
+            
+            # 停止运行中的服务
+            sudo systemctl is-active --quiet "$svc" && {
+                echo -e "${YELLOW}▷ 停止运行中的服务...${NC}"
+                sudo systemctl stop "$svc"
+            }
+            
+            # 卸载系统服务
+            sudo systemctl list-unit-files | grep -q "$svc" && {
+                echo -e "${YELLOW}▷ 卸载系统服务...${NC}"
+                sudo "$bin" service uninstall
+            }
+            
+            # 删除安装文件
+            echo -e "${YELLOW}▷ 删除安装文件...${NC}"
+            sudo rm -f "${NODE_DIR}/${NODE_BIN}"
+            echo -e "${GREEN}✓ 已卸载${NC}"
+            ;;
+    esac
+}
+
+# 8.2 节点/客户端管理菜单（整合安装/启动/重启/停止/卸载/更新）
+service_menu() {
+    local svc=$1 bin=$2 dir=$3 title=$4 status_func=$5 install_func=$6
+    
+    while :; do
+        # 实时获取服务状态
+        local stat=$($status_func)
+        echo ""
+        echo -e "${TITLE}${title} ${stat}${NC}"
+        echo -e "${SEPARATOR}==================================================${NC}"
+        
+        # 显示菜单选项（节点/客户端统一菜单，仅更新选项差异化显示）
+        echo -e "${OPTION_NUM}1. ${OPTION_TEXT}安装${NC}"
+        echo -e "${OPTION_NUM}2. ${OPTION_TEXT}启动${NC}"
+        echo -e "${OPTION_NUM}3. ${OPTION_TEXT}重启${NC}"
+        echo -e "${OPTION_NUM}4. ${OPTION_TEXT}停止${NC}"
+        echo -e "${OPTION_NUM}5. ${OPTION_TEXT}卸载${NC}"
+        [[ "$svc" == "$NODE_SVC" ]] && echo -e "${OPTION_NUM}6. ${OPTION_TEXT}更新${NC}"
+        echo -e "${OPTION_NUM}0. ${OPTION_TEXT}返回主菜单${NC}"
+        echo -e "${SEPARATOR}==================================================${NC}"
+        
+        # 读取用户选择，执行对应操作
+        read -rp "请输入选项: " choice
+        case $choice in
+            1) $install_func ;;  # 调用安装函数（install_node）
+            2) service_action "$svc" "$dir/$bin" start ;;
+            3) service_action "$svc" "$dir/$bin" restart ;;
+            4) service_action "$svc" "$dir/$bin" stop ;;
+            5) service_action "$svc" "$dir/$bin" uninstall ;;
+            6) [[ "$svc" == "$NODE_SVC" ]] && update_node || echo -e "${RED}无效选项${NC}" ;;
+            0) return ;;  # 返回主菜单
+            *) echo -e "${RED}无效选项，请重新选择${NC}" ;;
+        esac
+    done
 }
 
 # 修复：2.1 修复自动备份状态检测逻辑，从crontab检测改为Systemd Timer检测
@@ -1634,7 +1821,6 @@ show_info() {
     if [ -f "${NODE_DIR}/${NODE_BIN}" ]; then
         OS=$(uname -s | tr '[:upper:]' '[:lower:]')
         ARCH=$(uname -m)
-        # 架构检测（复用原有逻辑）
         case "$ARCH" in
             "x86_64") suffix="amd64_v1" ;;
             "i"*"86") suffix="386_sse2" ;;
@@ -1670,12 +1856,10 @@ show_info() {
         fi
     fi
 
-    # 重构列表式显示
     echo -e "${SEPARATOR}==================================================${NC}"
     echo -e "${TITLE}          GOSTC 服务管理工具箱 v${TOOL_VERSION}          ${NC}"
     echo -e "${SEPARATOR}==================================================${NC}"
 
-    # 1. 自动备份状态模块
     echo -e "\n${TITLE}【1】自动备份状态${NC}"
     echo -e "${SEPARATOR}--------------------------------------------------${NC}"
     if sudo crontab -l 2>/dev/null | grep -q "gostc_backup.sh"; then
